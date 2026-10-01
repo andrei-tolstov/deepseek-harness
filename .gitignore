@@ -1,0 +1,18 @@
+# Переменные окружения и секреты
+.env
+backup/rclone.conf
+backup/service_account.json
+*.key
+*.pem
+
+# Данные контейнеров
+data/
+workspace/
+backups/
+
+# Временные файлы системы и IDE
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

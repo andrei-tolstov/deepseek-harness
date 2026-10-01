@@ -1,0 +1,143 @@
+services:
+  # ---------------------------------------------------------------------------
+  # Redis: кэш и хранилище квот / rate limit для OmniRoute
+  # ---------------------------------------------------------------------------
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: omniroute-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - omniroute-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - deepseek-net
+
+  # ---------------------------------------------------------------------------
+  # OmniRoute: шлюз / роутер AI моделей (OpenAI, DeepSeek, Anthropic, OpenRouter)
+  # ---------------------------------------------------------------------------
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    container_name: omniroute
+    restart: unless-stopped
+    stop_grace_period: 40s
+    environment:
+      - DATA_DIR=/app/data
+      - REDIS_URL=redis://redis:6379
+      - APP_BIND_HOST=${HOST_BIND_IP:-127.0.0.1}
+      - DASHBOARD_PORT=${OMNIROUTE_DASHBOARD_PORT:-20128}
+      - API_PORT=${OMNIROUTE_API_PORT:-20129}
+      - LIVE_WS_PORT=${OMNIROUTE_LIVE_WS_PORT:-20132}
+      - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-}
+      - OMNIROUTE_MEMORY_MB=${OMNIROUTE_MEMORY_MB:-2048}
+      - TZ=${TZ:-Europe/Moscow}
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_DASHBOARD_PORT:-20128}:${OMNIROUTE_DASHBOARD_PORT:-20128}"
+      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_API_PORT:-20129}:${OMNIROUTE_API_PORT:-20129}"
+      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_LIVE_WS_PORT:-20132}:${OMNIROUTE_LIVE_WS_PORT:-20132}"
+    volumes:
+      - omniroute-data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - deepseek-net
+
+  # ---------------------------------------------------------------------------
+  # DeepSeek Harness (DSH): среда выполнения автономного AI агента DeepSeek
+  # ---------------------------------------------------------------------------
+  deepseek-harness:
+    image: docker.io/runzhliu/deepseek-harness:${DSH_IMAGE_TAG:-0.2.0-rc.2-r1}
+    container_name: deepseek-harness
+    restart: unless-stopped
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${DSH_PORT:-3080}:3080"
+      - "${HOST_BIND_IP:-127.0.0.1}:${DSH_DESKTOP_PORT:-6080}:6080"
+    environment:
+      DSH_TELEMETRY_DISABLED: "1"
+      DSH_DESKTOP_ENABLED: "1"
+      DSH_BROWSER_USE_ENABLED: "${DSH_BROWSER_USE_ENABLED:-1}"
+      DSH_DESKTOP_PUBLIC_PORT: "${DSH_DESKTOP_PORT:-6080}"
+      HOME: /workspace
+      TZ: "${TZ:-Europe/Moscow}"
+    volumes:
+      - dsh-home:/home/node/.dsh
+      - ${DSH_WORKSPACE:-./workspace}:/workspace
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m
+    shm_size: "1gb"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    depends_on:
+      - omniroute
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "Promise.all([fetch('http://127.0.0.1:3080/'), fetch('http://127.0.0.1:6080/vnc.html'), fetch('http://127.0.0.1:9222/json/version')]).then(([web, desktop, cdp]) => { if (web.status !== 401 || !desktop.ok || !cdp.ok) process.exit(1) }).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    networks:
+      - deepseek-net
+
+  # ---------------------------------------------------------------------------
+  # Backup: автоматическое резервное копирование данных на Google Диск через rclone
+  # ---------------------------------------------------------------------------
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    container_name: deepseek-backup
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - RCLONE_CONFIG=/config/rclone/rclone.conf
+      - RCLONE_REMOTE=${RCLONE_REMOTE:-gdrive}
+      - RCLONE_DEST_FOLDER=${RCLONE_DEST_FOLDER:-backups/deepseek-stack}
+      - RETENTION_DAYS=${RETENTION_DAYS:-14}
+      - MIN_BACKUPS_TO_KEEP=${MIN_BACKUPS_TO_KEEP:-3}
+      - BACKUP_CRON_SCHEDULE=${BACKUP_CRON_SCHEDULE:-0 3 * * *}
+      - BACKUP_ON_STARTUP=${BACKUP_ON_STARTUP:-false}
+    volumes:
+      # Тома с данными для резервного копирования (в режиме только для чтения)
+      - omniroute-data:/data/omniroute:ro
+      - dsh-home:/data/dsh-home:ro
+      - ${DSH_WORKSPACE:-./workspace}:/data/workspace:ro
+      # Конфигурация и учетные данные rclone
+      - ./backup:/config/rclone
+    depends_on:
+      - omniroute
+      - deepseek-harness
+    networks:
+      - deepseek-net
+
+networks:
+  deepseek-net:
+    name: deepseek-net
+    driver: bridge
+
+volumes:
+  omniroute-data:
+    name: deepseek_omniroute_data
+  omniroute-redis-data:
+    name: deepseek_redis_data
+  dsh-home:
+    name: deepseek_dsh_home

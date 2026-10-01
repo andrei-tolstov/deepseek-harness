@@ -1,0 +1,16 @@
+# Пример конфигурации rclone для Google Диска
+# Скопируйте этот файл в rclone.conf или сгенерируйте с помощью:
+# docker compose run --rm backup rclone config
+
+[gdrive]
+type = drive
+scope = drive
+
+# --- Вариант 1: Использование пользовательского OAuth токена ---
+# Получается интерактивно через `rclone config`
+# token = {"access_token":"ya29.a0...","token_type":"Bearer","refresh_token":"1//0...","expiry":"2026-10-01T20:00:00Z"}
+
+# --- Вариант 2: Использование Service Account (Google Cloud) ---
+# Рекомендуется для серверов без браузера:
+# service_account_file = /config/rclone/service_account.json
+# team_drive = 
