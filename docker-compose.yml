@@ -99,6 +99,35 @@ services:
       - deepseek-net
 
   # ---------------------------------------------------------------------------
+  # Laya: System 1 Decision Studio & REST API (быстрый инференс на ggmlc)
+  # Собрано из форка https://github.com/andrei-tolstov/ggmlc
+  # ---------------------------------------------------------------------------
+  laya:
+    build:
+      context: ./laya
+      dockerfile: Dockerfile
+    container_name: deepseek-laya
+    restart: unless-stopped
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${LAYA_PORT:-8080}:8080"
+    environment:
+      - PORT=8080
+      - DEVICE=${LAYA_DEVICE:-auto}
+      - MODEL_PATH=/models/laya_multilingual_f16.gguf
+      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---cuda-graph}
+      - TZ=${TZ:-Europe/Moscow}
+    volumes:
+      - ./models:/models
+    networks:
+      - deepseek-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
   # Backup: автоматическое резервное копирование данных на Google Диск через rclone
   # ---------------------------------------------------------------------------
   backup:

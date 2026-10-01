@@ -8,6 +8,8 @@ backup/service_account.json
 # Данные контейнеров
 data/
 workspace/
+models/
+!models/.gitkeep
 backups/
 
 # Временные файлы системы и IDE

@@ -1,0 +1,15 @@
+# Оверлей для включения аппаратного ускорения NVIDIA GPU в контейнере laya
+# Использование:
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+
+services:
+  laya:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

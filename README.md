@@ -4,7 +4,8 @@
 1. **DeepSeek Harness (`dsh`)** — автономная среда выполнения AI-агентов от DeepSeek AI с веб-интерфейсом и встроенным VNC-десктопом для браузерных задач.
 2. **OmniRoute** — шлюз-роутер AI моделей (OpenAI, DeepSeek, Anthropic, OpenRouter, Groq и еще 350+ провайдеров) с автоматическим переключением (fallback), кэшированием, защитой от исчерпания лимитов и экономией токенов.
 3. **Redis** — быстрое хранилище квот и состояний rate-limiting для OmniRoute.
-4. **Google Drive Backup** — автоматизированная служба резервного копирования на базе `rclone` и `crond`, которая архивирует базы данных, ключи провайдеров, сессии агента и выгружает архивы на Google Диск с автоматической ротацией старых копий.
+4. **Laya (System 1 Decision Studio)** — сверхбыстрый движок типизированного инференса решений (choice, score, noul) на базе компилятора `ggmlc` из вашего форка [andrei-tolstov/ggmlc](https://github.com/andrei-tolstov/ggmlc). Работает за один проход энкодера без генерации токенов (латентность ~200 мс на GPU).
+5. **Google Drive Backup** — автоматизированная служба резервного копирования на базе `rclone` и `crond`, которая архивирует базы данных, ключи провайдеров, сессии агента и выгружает архивы на Google Диск с автоматической ротацией старых копий.
 
 ---
 
@@ -87,6 +88,7 @@ docker compose ps
 | **OmniRoute API** | [http://127.0.0.1:20129](http://127.0.0.1:20129) | OpenAI-совместимый эндпоинт `/v1` |
 | **DeepSeek Harness Web UI** | [http://127.0.0.1:3080](http://127.0.0.1:3080) | Веб-интерфейс автономного AI-агента DeepSeek |
 | **DSH Desktop / VNC** | [http://127.0.0.1:6080](http://127.0.0.1:6080) | noVNC-трансляция экрана (для наблюдения за браузером агента) |
+| **Laya Decision Studio** | [http://127.0.0.1:8080](http://127.0.0.1:8080) | Веб-студия типизированных решений и REST API (`/v1/systemone`) |
 
 > [!TIP]
 > **Токен первого входа в DeepSeek Harness:**
@@ -94,6 +96,28 @@ docker compose ps
 > ```bash
 > docker compose logs deepseek-harness | grep "dsh web:"
 > ```
+
+---
+
+## Использование Laya (быстрый классификатор / System 1)
+
+Laya автоматически собирается из форка [andrei-tolstov/ggmlc](https://github.com/andrei-tolstov/ggmlc) и при первом старте автоматически загружает модель `laya_multilingual_f16.gguf` с Hugging Face в каталог `./models`.
+
+### Режимы работы:
+1. **Стандартный запуск (CPU / Auto fallback)**:
+   ```bash
+   docker compose up -d --build
+   ```
+2. **Запуск с аппаратным ускорением NVIDIA GPU (CUDA)**:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+   ```
+
+### Эндпоинты Laya:
+- **Web Studio:** `http://127.0.0.1:8080/`
+- **TypeSafe REST API:** `POST http://127.0.0.1:8080/v1/systemone`
+- **Healthcheck:** `GET http://127.0.0.1:8080/health`
+- **Внутри сети Docker:** сервис доступен для других контейнеров по адресу `http://laya:8080`
 
 ---
 
