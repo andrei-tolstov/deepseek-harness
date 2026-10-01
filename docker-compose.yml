@@ -55,12 +55,33 @@ services:
       - deepseek-net
 
   # ---------------------------------------------------------------------------
+  # Workspace-init: автоматическая настройка прав доступа для каталога workspace
+  # ---------------------------------------------------------------------------
+  workspace-init:
+    image: docker.io/library/alpine:latest
+    container_name: deepseek-workspace-init
+    restart: "no"
+    user: "0:0"
+    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace"
+    volumes:
+      - ${DSH_WORKSPACE:-./workspace}:/workspace
+    networks:
+      - deepseek-net
+
+  # ---------------------------------------------------------------------------
   # DeepSeek Harness (DSH): среда выполнения автономного AI агента DeepSeek
   # ---------------------------------------------------------------------------
   deepseek-harness:
     image: docker.io/runzhliu/deepseek-harness:${DSH_IMAGE_TAG:-0.2.0-rc.2-r1}
     container_name: deepseek-harness
     restart: unless-stopped
+    command:
+      - web
+      - --patch
+      - /opt/deepseek-harness/web.cordis.patch.yml
+      - --no-open
+      - --trusted-host
+      - "${DSH_TRUSTED_HOST:-192.168.50.101}"
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${DSH_PORT:-3080}:3080"
       - "${HOST_BIND_IP:-127.0.0.1}:${DSH_DESKTOP_PORT:-6080}:6080"
@@ -74,6 +95,7 @@ services:
     volumes:
       - dsh-home:/home/node/.dsh
       - ${DSH_WORKSPACE:-./workspace}:/workspace
+      - ./dsh-patches/browser-desktop-index.js:/opt/deepseek-harness/plugins/dsh-browser-desktop/index.js:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=512m
@@ -84,7 +106,10 @@ services:
       - no-new-privileges:true
     pids_limit: 512
     depends_on:
-      - omniroute
+      workspace-init:
+        condition: service_completed_successfully
+      omniroute:
+        condition: service_started
     healthcheck:
       test:
         - CMD
