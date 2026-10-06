@@ -10,7 +10,7 @@ services:
     volumes:
       - omniroute-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -46,7 +46,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "healthcheck.mjs"]
+      test: [ "CMD", "node", "healthcheck.mjs" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -62,9 +62,10 @@ services:
     container_name: deepseek-workspace-init
     restart: "no"
     user: "0:0"
-    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace"
+    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace && rm -f /dsh/profiles/web/package.json.lock"
     volumes:
       - ${DSH_WORKSPACE:-./workspace}:/workspace
+      - dsh-home:/dsh
     networks:
       - deepseek-net
 
@@ -81,7 +82,7 @@ services:
       - /opt/deepseek-harness/web.cordis.patch.yml
       - --no-open
       - --trusted-host
-      - "${DSH_TRUSTED_HOST:-192.168.50.101}"
+      - "${DSH_TRUSTED_HOST:-127.0.0.1}"
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${DSH_PORT:-3080}:3080"
       - "${HOST_BIND_IP:-127.0.0.1}:${DSH_DESKTOP_PORT:-6080}:6080"
@@ -124,6 +125,48 @@ services:
       - deepseek-net
 
   # ---------------------------------------------------------------------------
+  # VS Code (code-server): веб-редактор для удобного доступа к workspace и .dsh
+  # ---------------------------------------------------------------------------
+  vscode:
+    image: docker.io/codercom/code-server:latest
+    container_name: deepseek-vscode
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if grep -q "/etc/code-server" /home/coder/.local/share/code-server/coder.json 2>/dev/null; then
+          rm -f /home/coder/.local/share/code-server/coder.json
+        fi
+        cp -u /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace 2>/dev/null || cp /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace
+        exec code-server \
+          --bind-addr 0.0.0.0:8080 \
+          --auth "$${VSCODE_AUTH:-none}" \
+          $${VSCODE_CERT:+--cert} \
+          --disable-telemetry \
+          --disable-update-check \
+          --disable-workspace-trust \
+          /home/coder/deepseek.code-workspace
+    ports:
+      - "${HOST_BIND_IP:-127.0.0.1}:${VSCODE_PORT:-8443}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - PASSWORD=${VSCODE_PASSWORD:-}
+      - VSCODE_AUTH=${VSCODE_AUTH:-none}
+      - VSCODE_CERT=${VSCODE_CERT:-}
+      - DOCKER_USER=coder
+    volumes:
+      - vscode-data:/home/coder
+      - ${DSH_WORKSPACE:-./workspace}:/workspace
+      - dsh-home:/dsh
+      - ./deepseek.code-workspace:/etc/code-server/deepseek.code-workspace:ro
+    depends_on:
+      workspace-init:
+        condition: service_completed_successfully
+    networks:
+      - deepseek-net
+
+  # ---------------------------------------------------------------------------
   # Laya: System 1 Decision Studio & REST API (быстрый инференс на ggmlc)
   # Собрано из форка https://github.com/andrei-tolstov/ggmlc
   # ---------------------------------------------------------------------------
@@ -135,8 +178,10 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${LAYA_PORT:-8080}:8080"
+      - "${HOST_BIND_IP:-127.0.0.1}:${LAYA_MCP_PORT:-8787}:8787"
     environment:
       - PORT=8080
+      - MCP_PORT=${LAYA_MCP_PORT:-8787}
       - DEVICE=${LAYA_DEVICE:-auto}
       - MODEL_PATH=/models/laya_multilingual_f16.gguf
       - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---cuda-graph}
@@ -145,12 +190,21 @@ services:
       - ./models:/models
     networks:
       - deepseek-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health && curl -f http://localhost:8787/health" ]
       interval: 20s
       timeout: 5s
       retries: 3
       start_period: 40s
+
+
 
   # ---------------------------------------------------------------------------
   # Backup: автоматическое резервное копирование данных на Google Диск через rclone
@@ -195,3 +249,5 @@ volumes:
     name: deepseek_redis_data
   dsh-home:
     name: deepseek_dsh_home
+  vscode-data:
+    name: deepseek_vscode_data

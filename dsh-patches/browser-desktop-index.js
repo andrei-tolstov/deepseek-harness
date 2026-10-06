@@ -81,6 +81,14 @@ function renderConfigEditorHtml(yamlContent) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
 
+  const initialLines = yamlContent.split(/\r?\n/)
+  const initialCount = initialLines.length
+  let initialLineNumbers = ''
+  for (let i = 1; i <= initialCount; i++) {
+    initialLineNumbers += (i === 1 ? '' : '\n') + i
+  }
+  const initialWidth = Math.max(52, String(initialCount).length * 8 + 24)
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -215,17 +223,21 @@ function renderConfigEditorHtml(yamlContent) {
       background: var(--card-bg);
     }
     .line-numbers {
-      width: 52px;
-      padding: 16px 8px 16px 0;
+      min-width: 52px;
+      padding: 16px 10px 16px 0;
       text-align: right;
       font-family: var(--font-mono);
       font-size: 13px;
       line-height: 20px;
+      letter-spacing: normal;
       color: #555b68;
       background: #141518;
       border-right: 1px solid var(--border);
       user-select: none;
       overflow: hidden;
+      white-space: pre;
+      flex-shrink: 0;
+      box-sizing: border-box;
     }
     textarea {
       flex: 1;
@@ -234,6 +246,7 @@ function renderConfigEditorHtml(yamlContent) {
       font-family: var(--font-mono);
       font-size: 13px;
       line-height: 20px;
+      letter-spacing: normal;
       padding: 16px;
       border: none;
       outline: none;
@@ -303,14 +316,14 @@ function renderConfigEditorHtml(yamlContent) {
   </header>
 
   <div class="editor-container">
-    <div id="lineNumbers" class="line-numbers">1</div>
+    <div id="lineNumbers" class="line-numbers" style="width: ${initialWidth}px">${initialLineNumbers}</div>
     <textarea id="editor" spellcheck="false">${escapedYaml}</textarea>
   </div>
 
   <div class="footer-bar">
     <div class="footer-left">
       <span id="cursorPos">Строка 1, Колонка 1</span>
-      <span id="lineCount">Всего строк: 1</span>
+      <span id="lineCount">Всего строк: ${initialCount}</span>
       <span>Синтаксис: YAML (Cordis Patch)</span>
     </div>
     <div>
@@ -344,10 +357,12 @@ function renderConfigEditorHtml(yamlContent) {
       const count = lines.length;
       let numbers = '';
       for (let i = 1; i <= count; i++) {
-        numbers += i + '\\n';
+        numbers += (i === 1 ? '' : '\\n') + i;
       }
       lineNumbers.textContent = numbers;
       lineCount.textContent = 'Всего строк: ' + count;
+      const digits = String(count).length;
+      lineNumbers.style.width = Math.max(52, digits * 8 + 24) + 'px';
     }
 
     function updateCursor() {
@@ -379,6 +394,11 @@ function renderConfigEditorHtml(yamlContent) {
     editor.addEventListener('scroll', () => {
       lineNumbers.scrollTop = editor.scrollTop;
     });
+
+    lineNumbers.addEventListener('wheel', (e) => {
+      editor.scrollTop += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
 
     editor.addEventListener('click', updateCursor);
     editor.addEventListener('keyup', updateCursor);

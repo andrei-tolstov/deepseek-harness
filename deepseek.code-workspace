@@ -1,0 +1,16 @@
+{
+  "folders": [
+    {
+      "name": "Workspace",
+      "path": "/workspace"
+    },
+    {
+      "name": "DSH Config & Home (.dsh)",
+      "path": "/dsh"
+    }
+  ],
+  "settings": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  }
+}

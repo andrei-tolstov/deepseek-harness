@@ -47,17 +47,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir "mcp>=1.2" httpx starlette uvicorn
+
 
 # Копируем скомпилированные бинарники
 COPY --from=builder /src/build/examples/laya/laya /usr/local/bin/laya
 COPY --from=builder /src/build/runtime/ggmlc-run /usr/local/bin/ggmlc-run
 
-# Копируем скрипт запуска
+# Копируем сервер MCP и скрипт запуска
+COPY mcp_server.py /app/mcp_server.py
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 WORKDIR /app
-EXPOSE 8080
+EXPOSE 8080 8787
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+

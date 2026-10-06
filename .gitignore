@@ -1,9 +1,15 @@
 # Переменные окружения и секреты
-.env
+.env*
+!.env.example
+!.env.*.example
 backup/rclone.conf
 backup/service_account.json
 *.key
 *.pem
+*.pub
+id_*
+*.crt
+*.cer
 
 # Данные контейнеров
 data/
@@ -20,4 +26,4 @@ Thumbs.db
 .vscode/
 
 # AI assistant tasks
-tasks\todo.md
+tasks/todo.md

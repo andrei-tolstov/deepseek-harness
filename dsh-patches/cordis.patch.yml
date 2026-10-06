@@ -1,0 +1,166 @@
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      omniroute:
+        apiKeyEnv: OMNIROUTE_API_KEY
+        api: openai-completions
+        baseURL: http://omniroute:20128/v1
+        models: &a1
+          - id: qwen/qwen3.8-max:free
+            name: Qwen 3.8 Max (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.7-max:free
+            name: Qwen 3.7 Max (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.7-plus:free
+            name: Qwen 3.7 Plus (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.6-plus:free
+            name: Qwen 3.6 Plus (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.6-max-preview:free
+            name: Qwen 3.6 Max Preview (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3.6-35b-a3b:free
+            name: Qwen 3.6 35B A3B (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3.6-27b:free
+            name: Qwen 3.6 27B (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3.5-plus:free
+            name: Qwen 3.5 Plus (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.5-flash:free
+            name: Qwen 3.5 Flash (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: qwen/qwen3.5-397b-a17b:free
+            name: Qwen 3.5 397B A17B (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3.5-omni-flash:free
+            name: Qwen 3.5 Omni Flash (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3.5-omni-plus:free
+            name: Qwen 3.5 Omni Plus (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen3-coder-plus:free
+            name: Qwen 3 Coder Plus (Free)
+            contextWindow: 1048576
+            maxTokens: 65536
+          - id: qwen/qwen3-max:free
+            name: Qwen 3 Max (Free)
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: qwen/qwen-plus-2025-07-28:free
+            name: Qwen Plus 0728 (Free)
+            contextWindow: 131072
+            maxTokens: 65536
+          - id: sensenova/sensenova-6.8-flash-lite
+            name: SenseNova 6.8 Flash-Lite
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: sensenova/sensenova-6.7-flash-lite
+            name: SenseNova 6.7 Flash-Lite
+            contextWindow: 262144
+            maxTokens: 65536
+          - id: deepseek/deepseek-v4-pro
+            name: DeepSeek V4 Pro
+            contextWindow: 1048576
+            maxTokens: 65536
+          - id: deepseek/deepseek-v4-flash-vision-exp
+            name: DeepSeek V4 Flash Vision
+            contextWindow: 1048576
+            maxTokens: 65536
+          - id: cohere/command-a
+            name: Command A
+            contextWindow: 288000
+            maxTokens: 8192
+          - id: cohere/command-a-plus
+            name: Command A+
+            contextWindow: 436000
+            maxTokens: 64000
+          - id: meta/muse-spark-1.3-contributor:free
+            name: Muse Spark 1.3 (Free)
+            contextWindow: 1048576
+            maxTokens: 65536
+          - id: minimax/minimax-m2.5-highspeed:free
+            name: MiniMax M2.5 Highspeed (Free)
+            contextWindow: 204800
+            maxTokens: 65536
+          - id: minimax/minimax-m2.1-highspeed:free
+            name: MiniMax M2.1 Highspeed (Free)
+            contextWindow: 204800
+            maxTokens: 65536
+          - id: minimax/minimax-m2:free
+            name: MiniMax M2 (Free)
+            contextWindow: 204800
+            maxTokens: 65536
+          - id: meituan/longcat-2.5-preview:free
+            name: LongCat 2.5 Preview (Free)
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: dots-studio/dots-3-note-preview:free
+            name: Dots3-Note Preview (Free)
+            contextWindow: 512000
+            maxTokens: 460800
+          - id: inclusionai/ling-3.0-flash-sante:free
+            name: Ling 3.0 Flash Sante (Free)
+            contextWindow: 262144
+            maxTokens: 32768
+          - id: anthropic/claude-opus-4.7
+            name: Claude Opus 4.7
+            contextWindow: 1000000
+            maxTokens: 65536
+          - id: openai/gpt-5.6-sol
+            name: GPT-5.6 Sol
+            contextWindow: 1000000
+            maxTokens: 65536
+      xkiro:
+        apiKeyEnv: XKIRO_API_KEY
+        api: openai-completions
+        baseURL: https://api.xkiro.com/v1
+        headers:
+          User-Agent: curl/8.5.0
+        models: *a1
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: omniroute
+    model: qwen/qwen3.8-max:free
+- id: agent-preset-registry
+  name: "@deepseek-ai/dsh-agent-preset-registry"
+  config:
+    default: standard
+    selectedDefault: ptc
+- id: laya
+  name: "dsh-laya"
+  config:
+    sidecarUrl: "http://laya:8787"
+    requestTimeoutMs: 120000
+    lifecycle: never
+    logLevel: info
+- insert:
+    - id: laya-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: laya
+        transport: streamable-http
+        url: "http://laya:8787/mcp"
+        failOnStartupError: false
+
