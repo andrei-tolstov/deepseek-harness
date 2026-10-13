@@ -9,10 +9,12 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import sys
+import time
 from typing import Any, Mapping, Optional, Sequence
 import httpx
 from mcp.server.mcpserver import MCPServer
@@ -304,8 +306,46 @@ async def sidecar_ask(request: Request) -> JSONResponse:
         return JSONResponse(formatted)
     except ValueError as e:
         return JSONResponse({"ok": False, "error": "state_truncated", "hint": str(e)}, status_code=400)
+@server.custom_route("/reload", methods=["POST"])
+async def sidecar_reload(request: Request) -> JSONResponse:
+    start_time = time.time()
+    log.info("Received model reload request. Triggering engine restart...")
+    try:
+        # Create reload trigger flag file for entrypoint.sh supervisor loop
+        with open("/tmp/laya_restart_requested", "w", encoding="utf-8") as f:
+            f.write("1\n")
+
+        # Allow time for engine process shutdown
+        await asyncio.sleep(1.0)
+
+        # Poll health endpoint until new engine is ready (up to 20 seconds)
+        for attempt in range(40):
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    resp = await client.get(f"{LAYA_ENGINE_URL.rstrip('/')}/health")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        latency_ms = round((time.time() - start_time) * 1000, 1)
+                        log.info("Model reload completed in %sms: %s", latency_ms, data)
+                        return JSONResponse({
+                            "ok": True,
+                            "reloaded": True,
+                            "latency_ms": latency_ms,
+                            "model": os.environ.get("MODEL_PATH", "/models/laya_multilingual_f16.gguf"),
+                            "engine": data,
+                        })
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+
+        return JSONResponse({
+            "ok": False,
+            "reloaded": False,
+            "error": "Engine healthcheck timed out during reload",
+        }, status_code=504)
     except Exception as e:
-        return JSONResponse({"ok": False, "error": "inference_error", "hint": str(e)}, status_code=500)
+        log.error("Error handling reload request: %s", e)
+        return JSONResponse({"ok": False, "reloaded": False, "error": str(e)}, status_code=500)
 
 
 from mcp.server.transport_security import TransportSecuritySettings

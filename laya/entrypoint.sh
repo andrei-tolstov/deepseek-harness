@@ -28,8 +28,13 @@ echo "        Устройство: $DEVICE"
 echo "        Флаги     : $EXTRA_FLAGS"
 echo "======================================================================"
 
-/usr/local/bin/laya serve "$MODEL_PATH" --port "$PORT" --device "$DEVICE" $EXTRA_FLAGS &
-LAYA_PID=$!
+start_laya() {
+    /usr/local/bin/laya serve "$MODEL_PATH" --port "$PORT" --device "$DEVICE" $EXTRA_FLAGS &
+    LAYA_PID=$!
+    echo "$LAYA_PID" > /tmp/laya.pid
+}
+
+start_laya
 
 echo " [Laya] Ожидание готовности C++ инференс-сервера на порту $PORT..."
 until curl -s "http://127.0.0.1:$PORT/health" > /dev/null; do
@@ -60,5 +65,21 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-wait -n "$LAYA_PID" "$MCP_PID"
+while kill -0 "$MCP_PID" 2>/dev/null; do
+    if [ -f /tmp/laya_restart_requested ]; then
+        echo " [Laya] Обнаружен запрос на перезагрузку весов модели. Перезапуск C++ движка..."
+        rm -f /tmp/laya_restart_requested
+        kill -TERM "$LAYA_PID" 2>/dev/null || true
+        wait "$LAYA_PID" 2>/dev/null || true
+        sleep 0.5
+        start_laya
+    fi
+    if ! kill -0 "$LAYA_PID" 2>/dev/null; then
+        echo " [Laya] C++ инференс-сервер завершился, перезапуск..."
+        sleep 1
+        start_laya
+    fi
+    sleep 0.5
+done
+
 cleanup
