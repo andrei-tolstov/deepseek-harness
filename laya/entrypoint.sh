@@ -5,8 +5,8 @@ MODEL_PATH="${MODEL_PATH:-/models/laya_multilingual_f16.gguf}"
 MODEL_URL="${MODEL_URL:-https://huggingface.co/mys/laya-multilingual-GGUF/resolve/main/laya_multilingual_f16.gguf}"
 PORT="${PORT:-8080}"
 MCP_PORT="${MCP_PORT:-8787}"
-DEVICE="${DEVICE:-auto}"
-EXTRA_FLAGS="${EXTRA_FLAGS:---cuda-graph}"
+DEVICE="${DEVICE:-cpu}"
+EXTRA_FLAGS="${EXTRA_FLAGS:---threads 8}"
 
 mkdir -p "$(dirname "$MODEL_PATH")"
 

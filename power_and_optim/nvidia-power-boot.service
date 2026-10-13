@@ -1,0 +1,11 @@
+[Unit]
+Description=Set NVIDIA Tesla V100 Initial Power Limit on System Boot
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nvidia-power-scheduler.sh auto
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

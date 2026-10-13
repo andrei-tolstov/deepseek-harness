@@ -27,3 +27,6 @@ Thumbs.db
 
 # AI assistant tasks
 tasks/todo.md
+
+# Graphify knowledge graph
+graphify-out/

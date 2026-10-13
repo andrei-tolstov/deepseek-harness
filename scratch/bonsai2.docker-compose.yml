@@ -1,0 +1,83 @@
+services:
+  bonsai2-llama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA_ARCHITECTURES: "70"
+    image: prismml-llama:v100
+    container_name: bonsai2-llama-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "0.0.0.0:8082:8080"
+    networks:
+      - deepseek-net
+    environment:
+      - LD_LIBRARY_PATH=/app
+      - TZ=Europe/Moscow
+      - BONSAI_MODEL_FILE=Ternary-Bonsai-2-27B-Uncensored-Heretic-PQ2_0.gguf
+      - BONSAI_MMPROJ_FILE=mmproj-BF16.gguf
+      - BONSAI_NO_MMPROJ_OFFLOAD=true
+      - BONSAI_CPU_THREADS=16
+      - BONSAI_API_KEY=${BONSAI_API_KEY:-}
+      - BONSAI_ALIAS=bonsai2-27b,bonsai2,default
+      - BONSAI_CTX_SIZE=262144
+      - BONSAI_BATCH_SIZE=4096
+      - BONSAI_UBATCH_SIZE=1024
+      - BONSAI_CACHE_K=f16
+      - BONSAI_CACHE_V=f16
+      - BONSAI_TEMP=1.0
+      - BONSAI_TOP_P=0.95
+      - BONSAI_TOP_K=20
+      - BONSAI_MIN_P=0.05
+      - BONSAI_REASONING_EFFORT=medium
+    volumes:
+      - /root/model/bonsai2:/models:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        SERVER_BIN=$$(which /app/llama-server || which llama-server || find / -name llama-server -executable | head -n 1)
+        API_KEY_ARG=""
+        [ -n "$$BONSAI_API_KEY" ] && API_KEY_ARG="--api-key $$BONSAI_API_KEY"
+
+        MMPROJ_ARG=""
+        if [ -f "/models/mmproj-BF16.gguf" ]; then
+          echo "Подключение mmproj (выгрузка в RAM): /models/mmproj-BF16.gguf"
+          MMPROJ_ARG="--mmproj /models/mmproj-BF16.gguf --no-mmproj-offload --threads 16"
+        fi
+
+        exec $$SERVER_BIN --host 0.0.0.0 --port 8080 \
+          -m /models/Ternary-Bonsai-2-27B-Uncensored-Heretic-PQ2_0.gguf \
+          $$MMPROJ_ARG \
+          -c 262144 \
+          --flash-attn on \
+          -ctk f16 -ctv f16 \
+          -b 4096 -ub 1024 \
+          -ngl 999 \
+          --load-mode auto \
+          --parallel 1 \
+          --slots \
+          --jinja \
+          --reasoning on --reasoning-effort medium \
+          --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.05 \
+          --alias bonsai2-27b,bonsai2,default $$API_KEY_ARG
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  deepseek-net:
+    external: true

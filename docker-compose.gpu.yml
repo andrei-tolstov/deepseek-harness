@@ -6,6 +6,7 @@ services:
   laya:
     environment:
       - DEVICE=cuda
+      - EXTRA_FLAGS=--cuda-graph
     deploy:
       resources:
         reservations:

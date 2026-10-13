@@ -35,6 +35,12 @@ services:
       - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
       - INITIAL_PASSWORD=${INITIAL_PASSWORD:-}
       - OMNIROUTE_MEMORY_MB=${OMNIROUTE_MEMORY_MB:-2048}
+      - REQUEST_TIMEOUT_MS=${REQUEST_TIMEOUT_MS:-1200000}
+      - FETCH_TIMEOUT_MS=${FETCH_TIMEOUT_MS:-1200000}
+      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-1200000}
+      - STREAM_ACTIVE_TIMEOUT_MS=${STREAM_ACTIVE_TIMEOUT_MS:-1800000}
+      - STREAM_READINESS_TIMEOUT_MS=${STREAM_READINESS_TIMEOUT_MS:-1200000}
+      - STREAM_READINESS_MAX_TIMEOUT_MS=${STREAM_READINESS_MAX_TIMEOUT_MS:-1200000}
       - TZ=${TZ:-Europe/Moscow}
     ports:
       - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_DASHBOARD_PORT:-20128}:${OMNIROUTE_DASHBOARD_PORT:-20128}"
@@ -62,7 +68,7 @@ services:
     container_name: deepseek-workspace-init
     restart: "no"
     user: "0:0"
-    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace && rm -f /dsh/profiles/web/package.json.lock"
+    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace && chown -R 1000:1000 /dsh && rm -f /dsh/profiles/web/package.json.lock"
     volumes:
       - ${DSH_WORKSPACE:-./workspace}:/workspace
       - dsh-home:/dsh
@@ -97,6 +103,7 @@ services:
       - dsh-home:/home/node/.dsh
       - ${DSH_WORKSPACE:-./workspace}:/workspace
       - ./dsh-patches/browser-desktop-index.js:/opt/deepseek-harness/plugins/dsh-browser-desktop/index.js:ro
+      - ./dsh-patches/client-connection-index.js:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js:ro
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=512m
@@ -116,7 +123,7 @@ services:
         - CMD
         - node
         - -e
-        - "Promise.all([fetch('http://127.0.0.1:3080/'), fetch('http://127.0.0.1:6080/vnc.html'), fetch('http://127.0.0.1:9222/json/version')]).then(([web, desktop, cdp]) => { if (web.status !== 401 || !desktop.ok || !cdp.ok) process.exit(1) }).catch(() => process.exit(1))"
+        - "Promise.all([fetch('http://127.0.0.1:3080/'), fetch('http://127.0.0.1:6080/vnc.html'), fetch('http://127.0.0.1:9222/json/version')]).then(([web, desktop, cdp]) => { if (![200, 401].includes(web.status) || !desktop.ok || !cdp.ok) process.exit(1) }).catch(() => process.exit(1))"
       interval: 15s
       timeout: 3s
       start_period: 20s
@@ -182,21 +189,16 @@ services:
     environment:
       - PORT=8080
       - MCP_PORT=${LAYA_MCP_PORT:-8787}
-      - DEVICE=${LAYA_DEVICE:-auto}
+      - DEVICE=${LAYA_DEVICE:-cpu}
+      - CUDA_VISIBLE_DEVICES=""
       - MODEL_PATH=/models/laya_multilingual_f16.gguf
-      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---cuda-graph}
+      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---threads 8}
       - TZ=${TZ:-Europe/Moscow}
     volumes:
       - ./models:/models
+      - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/lib/x86_64-linux-gnu/libcuda.so.1:ro
     networks:
       - deepseek-net
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
       test: [ "CMD-SHELL", "curl -f http://localhost:8080/health && curl -f http://localhost:8787/health" ]
       interval: 20s

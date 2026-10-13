@@ -1,0 +1,10 @@
+[Unit]
+Description=Set NVIDIA Tesla V100 Night Quiet Mode (100W)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nvidia-power-scheduler.sh night
+
+[Install]
+WantedBy=multi-user.target

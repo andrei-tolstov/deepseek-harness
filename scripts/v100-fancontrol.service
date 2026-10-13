@@ -1,0 +1,16 @@
+[Unit]
+Description=Tesla V100 GPU Automatic Fan Control (NCT6779 SFAN3)
+After=multi-user.target nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /usr/local/bin/v100-fancontrol.py
+Restart=always
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

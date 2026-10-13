@@ -1,0 +1,9 @@
+[Unit]
+Description=Timer to trigger NVIDIA Tesla V100 Night Quiet Mode (100W at 23:00 MSK)
+
+[Timer]
+OnCalendar=*-*-* 23:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
