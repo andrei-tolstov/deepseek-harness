@@ -1,6 +1,6 @@
 # Настройка резервного копирования на Google Диск (rclone)
 
-Данный сервис автоматически упаковывает данные `OmniRoute` (настройки, ключи API, маршруты), `DeepSeek Harness` (сессии, конфиги) и рабочей директории в `.tar.gz` архивы и выгружает их на Google Диск по расписанию через `rclone`.
+Данный сервис автоматически упаковывает данные `OmniRoute` (настройки, ключи API, маршруты), а также директории нативного стека Harness (`Hermes Agent`: `${HERMES_DIR:-/root/harness/hermes}`, `DSH`: `${DSH_DIR:-/root/harness/dsh}`) в `.tar.gz` архивы и выгружает их на Google Диск по расписанию через `rclone`.
 
 ---
 
@@ -79,9 +79,9 @@ docker compose run --rm backup list
 ```bash
 docker compose run --rm backup rclone copy gdrive:backups/deepseek-stack/backup_XXXXXXXX_XXXXXX.tar.gz /tmp/
 ```
-2. Распакуйте архив в директорию данных (предварительно остановив сервисы `docker compose stop deepseek-harness omniroute`):
+2. Распакуйте архив в директорию данных (предварительно остановив сервисы `docker compose stop omniroute`):
 ```bash
-docker compose run --rm -v omniroute-data:/data/omniroute -v dsh-home:/data/dsh-home backup tar -xzf /tmp/backup_XXXXXXXX_XXXXXX.tar.gz -C /data
+docker compose run --rm -v omniroute-data:/data/omniroute -v ${DSH_DIR:-/root/harness/dsh}:/data/dsh -v ${HERMES_DIR:-/root/harness/hermes}:/data/hermes backup tar -xzf /tmp/backup_XXXXXXXX_XXXXXX.tar.gz -C /data
 ```
 3. Запустите сервисы обратно:
 ```bash

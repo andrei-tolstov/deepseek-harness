@@ -5,8 +5,12 @@
       "path": "/workspace"
     },
     {
-      "name": "DSH Config & Home (.dsh)",
+      "name": "DSH (DeepSeek Harness)",
       "path": "/dsh"
+    },
+    {
+      "name": "Hermes Agent",
+      "path": "/hermes"
     }
   ],
   "settings": {

@@ -2,6 +2,19 @@
   name: "@deepseek-ai/dsh-client-ui-settings-general"
   config:
     welcomeNoticeVersion: 2026-09-28.1
+- id: compaction-basic
+  name: "@deepseek-ai/dsh-compaction-basic"
+  config:
+    # Дополнительный объем объем токенов 
+    headroomTokens: 32768
+    # порог срабатывания авто-сжатия от окна контекста (по умолчанию 0.95)
+    thresholdRatio: 0.8
+    # минимальный процент токенов, которые должны остаться после сжатия
+    retainRatio: 0.16
+    # максимальное количество токенов в сжатом диалоге
+    maxTokens: 32768
+    # уровень мышления модели при сжатии ("off", "low", "medium", "high", "xhigh")
+    reasoningEffort: "medium"
 - id: llm-pi-ai
   name: "@deepseek-ai/dsh-llm-pi-ai"
   config:
@@ -15,17 +28,19 @@
           - id: qwen38/qwen3.8
             name: Qwen 3.8 27B (Local V100 180K)
             contextWindow: 180000
-            maxTokens: 65536
+            maxTokens: 32768
             input:
               - text
               - image
-          - id: qwen3.8
-            name: Qwen 3.8 27B (Alias Local 180K)
-            contextWindow: 180000
-            maxTokens: 65536
-            input:
-              - text
-              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
           - id: xkiro/sensenova/sensenova-6.8-flash-lite
             name: SenseNova 6.8 Flash-Lite
             contextWindow: 262144
@@ -62,13 +77,52 @@
             input:
               - text
               - image
-          - id: qwen38/qwen3.8-27b
-            name: Qwen 3.8 27B (Local V100 180K)
-            contextWindow: 180000
-            maxTokens: 65536
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+          - id: fable/fable-cold-fusion-27b
+            name: Fable Cold Fusion 27B (Local V100 190K)
+            contextWindow: 190000
+            maxTokens: 32768
             input:
               - text
               - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+      fable:
+        displayName: fable-direct
+        api: openai-completions
+        baseURL: http://192.168.50.101:8083/v1
+        models:
+          - id: fable-cold-fusion-27b
+            name: Fable Cold Fusion (Direct V100 190K)
+            contextWindow: 190000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
       self:
         displayName: self
         api: openai-completions
@@ -77,24 +131,19 @@
           - id: default
             name: Qwen 3.8 (Direct V100 180K)
             contextWindow: 180000
-            maxTokens: 65536
+            maxTokens: 32768
             input:
               - text
               - image
-          - id: qwen3.8
-            name: Qwen 3.8 (Direct 180K)
-            contextWindow: 180000
-            maxTokens: 65536
-            input:
-              - text
-              - image
-          - id: qwen3.8-27b
-            name: Qwen 3.8 27B (Direct 180K)
-            contextWindow: 180000
-            maxTokens: 65536
-            input:
-              - text
-              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
 - id: agent-default-model
   name: "@deepseek-ai/dsh-agent-default-model"
   config:
@@ -179,8 +228,13 @@
       name: "dsh-laya-tools"
       config:
         sidecarUrl: "http://laya:8787"
-        hierarchical: true
+        hierarchical: false
         categorizationIntervalMs: 86400000
-        maxTools: 10
+        maxTools: 50
         fallbackMode: "pass-all"
         enabled: true
+- id: subagent
+  name: "@deepseek-ai/dsh-subagent"
+  config:
+    maxActiveSubagents: 1
+

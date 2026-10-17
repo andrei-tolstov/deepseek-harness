@@ -1,0 +1,140 @@
+# ==============================================================================
+# Docker Compose: llama.cpp Server для DavidAU Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882
+# Специализированная конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+#
+# Ключевые параметры:
+#   - Модель: DavidAU Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-Q6_K.gguf (~22.38 GiB)
+#   - Движок: ghcr.io/ggml-org/llama.cpp:server-cuda
+#   - Спекулятивное декодирование: Встроенный MTP (--spec-type draft-mtp)
+#   - Vision mmproj: mmproj-BF16.gguf (~0.93 GB) в оперативной памяти хоста (--no-mmproj-offload)
+#   - KV-кэш: Квантованный Q8_0 (-ctk q8_0 -ctv q8_0), 34.0 KiB / токен
+#   - Контекст: 205 000 токенов (-c 205000) -> 6.65 GiB KV-кэш
+#   - VRAM суммарно: ~30.78 GiB из 31.60 GiB доступных (Минимальный защитный буфер: ~0.82 GiB / ~840 MiB до OOM)
+#   - Изоляция GPU: явный device_ids для защиты от сбоя CUDA Forward Compatibility на гибридных системах (Tesla + Pascal)
+# ==============================================================================
+
+services:
+  fable-llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: fable-llama-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${FABLE_PORT:-8083}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - LD_LIBRARY_PATH=/app:${LD_LIBRARY_PATH:-}
+      - FABLE_MODEL_FILE=${FABLE_MODEL_FILE:-Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-Q6_K.gguf}
+      - FABLE_MMPROJ_FILE=${FABLE_MMPROJ_FILE:-mmproj-BF16.gguf}
+      - FABLE_NO_MMPROJ_OFFLOAD=${FABLE_NO_MMPROJ_OFFLOAD:-true}
+      - FABLE_CPU_THREADS=${FABLE_CPU_THREADS:-16}
+      - FABLE_API_KEY=${FABLE_API_KEY:-}
+      - FABLE_ALIAS=${FABLE_ALIAS:-fable-cold-fusion-27b}
+      - FABLE_CTX_SIZE=${FABLE_CTX_SIZE:-190000}
+      - FABLE_BATCH_SIZE=${FABLE_BATCH_SIZE:-4096}
+      - FABLE_UBATCH_SIZE=${FABLE_UBATCH_SIZE:-1024}
+      - FABLE_CACHE_K=${FABLE_CACHE_K:-q8_0}
+      - FABLE_CACHE_V=${FABLE_CACHE_V:-q8_0}
+      - FABLE_N_GPU_LAYERS=${FABLE_N_GPU_LAYERS:-999}
+      - FABLE_ENABLE_MTP=${FABLE_ENABLE_MTP:-true}
+      - FABLE_SPEC_DRAFT_N_MAX=${FABLE_SPEC_DRAFT_N_MAX:-3}
+      - FABLE_ENABLE_THINKING=${FABLE_ENABLE_THINKING:-true}
+      - FABLE_REASONING_EFFORT=${FABLE_REASONING_EFFORT:-medium}
+      - FABLE_TEMP=${FABLE_TEMP:-0.85}
+      - FABLE_TOP_P=${FABLE_TOP_P:-0.95}
+      - FABLE_TOP_K=${FABLE_TOP_K:-20}
+      - FABLE_MIN_P=${FABLE_MIN_P:-0.05}
+      - FABLE_REPEAT_PENALTY=${FABLE_REPEAT_PENALTY:-1.0}
+      - FABLE_EXTRA_ARGS=${FABLE_EXTRA_ARGS:---load-mode auto --slots}
+    volumes:
+      - "${FABLE_MODELS_DIR:-/root/model/fable_cold_fusion}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [DavidAU Fable Cold Fusion 735 llama-server] Инициализация на V100..."
+        echo "======================================================================"
+
+        SERVER_BIN="$$(which llama-server 2>/dev/null || which /app/llama-server 2>/dev/null || find / -name llama-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник llama-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${FABLE_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден по пути: $$MODEL_PATH"
+          echo "Убедитесь, что модель скачана в $${FABLE_MODELS_DIR:-/root/model/fable_cold_fusion}"
+          exit 1
+        fi
+
+        ARGS="--host 0.0.0.0 --port 8080"
+        ARGS="$$ARGS -m $$MODEL_PATH"
+
+        # Мультимодальный проектор (mmproj) в системной RAM CPU
+        MMPROJ_PATH="/models/$${FABLE_MMPROJ_FILE}"
+        if [ -n "$$FABLE_MMPROJ_FILE" ] && [ -f "$$MMPROJ_PATH" ]; then
+          echo "Подключение мультимодального проектора (mmproj): $$MMPROJ_PATH"
+          ARGS="$$ARGS --mmproj $$MMPROJ_PATH"
+          if [ "$$FABLE_NO_MMPROJ_OFFLOAD" = "true" ]; then
+            echo "Vision Tower принудительно исполняется в RAM хоста (--no-mmproj-offload)"
+            ARGS="$$ARGS --no-mmproj-offload"
+          fi
+          if [ -n "$$FABLE_CPU_THREADS" ]; then
+            ARGS="$$ARGS --threads $$FABLE_CPU_THREADS"
+          fi
+        fi
+
+        # Спекулятивное ускорение MTP
+        if [ "$$FABLE_ENABLE_MTP" = "true" ]; then
+          echo "Включение спекулятивного декодирования MTP (--spec-type draft-mtp)"
+          ARGS="$$ARGS --spec-type draft-mtp --spec-draft-n-max $${FABLE_SPEC_DRAFT_N_MAX:-3} --spec-draft-p-min 0"
+        fi
+
+        ARGS="$$ARGS -ngl $${FABLE_N_GPU_LAYERS}"
+        ARGS="$$ARGS -c $${FABLE_CTX_SIZE}"
+        ARGS="$$ARGS --flash-attn on"
+        ARGS="$$ARGS -b $${FABLE_BATCH_SIZE} -ub $${FABLE_UBATCH_SIZE}"
+        ARGS="$$ARGS -ctk $${FABLE_CACHE_K} -ctv $${FABLE_CACHE_V}"
+        ARGS="$$ARGS --parallel 1 --timeout 86400"
+        ARGS="$$ARGS --jinja"
+
+        if [ "$$FABLE_ENABLE_THINKING" = "false" ]; then
+          ARGS="$$ARGS --reasoning off"
+        else
+          ARGS="$$ARGS --reasoning on --reasoning-format deepseek --reasoning-effort $${FABLE_REASONING_EFFORT:-medium} --reasoning-preserve"
+        fi
+
+        ARGS="$$ARGS --temp $${FABLE_TEMP} --top-p $${FABLE_TOP_P} --top-k $${FABLE_TOP_K} --min-p $${FABLE_MIN_P} --repeat-penalty $${FABLE_REPEAT_PENALTY}"
+
+        if [ -n "$$FABLE_ALIAS" ]; then
+          ARGS="$$ARGS --alias $$FABLE_ALIAS"
+        fi
+
+        if [ -n "$$FABLE_API_KEY" ]; then
+          ARGS="$$ARGS --api-key $$FABLE_API_KEY"
+        fi
+
+        if [ -n "$$FABLE_EXTRA_ARGS" ]; then
+          ARGS="$$ARGS $$FABLE_EXTRA_ARGS"
+        fi
+
+        echo "======================================================================"
+        echo " Запуск llama-server: $$SERVER_BIN $$ARGS"
+        echo "======================================================================"
+        eval exec "$$SERVER_BIN" "$$ARGS"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

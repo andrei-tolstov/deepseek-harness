@@ -68,71 +68,14 @@ services:
     container_name: deepseek-workspace-init
     restart: "no"
     user: "0:0"
-    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace && chown -R 1000:1000 /dsh && rm -f /dsh/profiles/web/package.json.lock"
+    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace"
     volumes:
-      - ${DSH_WORKSPACE:-./workspace}:/workspace
-      - dsh-home:/dsh
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
     networks:
       - deepseek-net
 
   # ---------------------------------------------------------------------------
-  # DeepSeek Harness (DSH): среда выполнения автономного AI агента DeepSeek
-  # ---------------------------------------------------------------------------
-  deepseek-harness:
-    image: docker.io/runzhliu/deepseek-harness:${DSH_IMAGE_TAG:-0.2.0-rc.2-r1}
-    container_name: deepseek-harness
-    restart: unless-stopped
-    command:
-      - web
-      - --patch
-      - /opt/deepseek-harness/web.cordis.patch.yml
-      - --no-open
-      - --trusted-host
-      - "${DSH_TRUSTED_HOST:-127.0.0.1}"
-    ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${DSH_PORT:-3080}:3080"
-      - "${HOST_BIND_IP:-127.0.0.1}:${DSH_DESKTOP_PORT:-6080}:6080"
-    environment:
-      DSH_TELEMETRY_DISABLED: "1"
-      DSH_DESKTOP_ENABLED: "1"
-      DSH_BROWSER_USE_ENABLED: "${DSH_BROWSER_USE_ENABLED:-1}"
-      DSH_DESKTOP_PUBLIC_PORT: "${DSH_DESKTOP_PORT:-6080}"
-      HOME: /workspace
-      TZ: "${TZ:-Europe/Moscow}"
-    volumes:
-      - dsh-home:/home/node/.dsh
-      - ${DSH_WORKSPACE:-./workspace}:/workspace
-      - ./dsh-patches/browser-desktop-index.js:/opt/deepseek-harness/plugins/dsh-browser-desktop/index.js:ro
-      - ./dsh-patches/client-connection-index.js:/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js:ro
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=512m
-    shm_size: "1gb"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 512
-    depends_on:
-      workspace-init:
-        condition: service_completed_successfully
-      omniroute:
-        condition: service_started
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "Promise.all([fetch('http://127.0.0.1:3080/'), fetch('http://127.0.0.1:6080/vnc.html'), fetch('http://127.0.0.1:9222/json/version')]).then(([web, desktop, cdp]) => { if (![200, 401].includes(web.status) || !desktop.ok || !cdp.ok) process.exit(1) }).catch(() => process.exit(1))"
-      interval: 15s
-      timeout: 3s
-      start_period: 20s
-      retries: 3
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # VS Code (code-server): веб-редактор для удобного доступа к workspace и .dsh
+  # VS Code (code-server): веб-редактор для удобного доступа к workspace
   # ---------------------------------------------------------------------------
   vscode:
     image: docker.io/codercom/code-server:latest
@@ -164,8 +107,9 @@ services:
       - DOCKER_USER=coder
     volumes:
       - vscode-data:/home/coder
-      - ${DSH_WORKSPACE:-./workspace}:/workspace
-      - dsh-home:/dsh
+      - ${WORKSPACE_DIR:-./workspace}:/workspace
+      - ${DSH_DIR:-/root/harness/dsh}:/dsh
+      - ${HERMES_DIR:-/root/harness/hermes}:/hermes
       - ./deepseek.code-workspace:/etc/code-server/deepseek.code-workspace:ro
     depends_on:
       workspace-init:
@@ -189,14 +133,21 @@ services:
     environment:
       - PORT=8080
       - MCP_PORT=${LAYA_MCP_PORT:-8787}
-      - DEVICE=${LAYA_DEVICE:-cpu}
-      - CUDA_VISIBLE_DEVICES=""
+      - DEVICE=${LAYA_DEVICE:-cuda}
       - MODEL_PATH=/models/laya_multilingual_f16.gguf
-      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---threads 8}
+      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---cuda-graph}
       - TZ=${TZ:-Europe/Moscow}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ 'GPU-7b86aac7-cea5-5401-ceb0-463b5df668b1' ]
+              capabilities: [ gpu ]
     volumes:
       - ./models:/models
       - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/lib/x86_64-linux-gnu/libcuda.so.1:ro
+      - ./laya/mcp_server.py:/app/mcp_server.py:ro
     networks:
       - deepseek-net
     healthcheck:
@@ -205,8 +156,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
-
-
 
   # ---------------------------------------------------------------------------
   # Backup: автоматическое резервное копирование данных на Google Диск через rclone
@@ -227,15 +176,14 @@ services:
       - BACKUP_CRON_SCHEDULE=${BACKUP_CRON_SCHEDULE:-0 3 * * *}
       - BACKUP_ON_STARTUP=${BACKUP_ON_STARTUP:-false}
     volumes:
-      # Тома с данными для резервного копирования (в режиме только для чтения)
+      # Тома и внешние каталоги для резервного копирования (в режиме только для чтения)
       - omniroute-data:/data/omniroute:ro
-      - dsh-home:/data/dsh-home:ro
-      - ${DSH_WORKSPACE:-./workspace}:/data/workspace:ro
+      - ${HERMES_DIR:-/root/harness/hermes}:/data/hermes:ro
+      - ${DSH_DIR:-/root/harness/dsh}:/data/dsh:ro
       # Конфигурация и учетные данные rclone
       - ./backup:/config/rclone
     depends_on:
       - omniroute
-      - deepseek-harness
     networks:
       - deepseek-net
 
@@ -249,7 +197,5 @@ volumes:
     name: deepseek_omniroute_data
   omniroute-redis-data:
     name: deepseek_redis_data
-  dsh-home:
-    name: deepseek_dsh_home
   vscode-data:
     name: deepseek_vscode_data

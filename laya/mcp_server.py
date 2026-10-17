@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any, Mapping, Optional, Sequence
@@ -346,6 +347,171 @@ async def sidecar_reload(request: Request) -> JSONResponse:
     except Exception as e:
         log.error("Error handling reload request: %s", e)
         return JSONResponse({"ok": False, "reloaded": False, "error": str(e)}, status_code=500)
+
+
+@server.custom_route("/v1/chat/completions", methods=["POST"])
+@server.custom_route("/chat/completions", methods=["POST"])
+async def sidecar_chat_completions(request: Request) -> JSONResponse:
+    """OpenAI-compatible /v1/chat/completions endpoint for Hermes Tool Router."""
+    try:
+        body = await request.json()
+        messages = body.get("messages", [])
+        model = body.get("model", "laya-multilingual")
+
+        # Combine messages to find system prompt and user text
+        prompt_text = ""
+        for m in messages:
+            content = m.get("content", "")
+            if content:
+                prompt_text += f"\n{content}"
+
+        toolsets_map: dict[str, str] = {}
+        user_message = ""
+
+        # Extract available toolsets and user message from prompt
+        toolsets_match = re.search(
+            r"Available toolsets:\s*\n(.*?)(?:\n\s*User message:|\Z)",
+            prompt_text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if toolsets_match:
+            lines = toolsets_match.group(1).strip().splitlines()
+            for line in lines:
+                line = line.strip()
+                if line.startswith("-") or line.startswith("*"):
+                    line = line[1:].strip()
+                if ":" in line:
+                    ts_name, ts_desc = line.split(":", 1)
+                    toolsets_map[ts_name.strip()] = ts_desc.strip()
+
+        user_match = re.search(r"User message:\s*\n(.*)", prompt_text, re.DOTALL | re.IGNORECASE)
+        if user_match:
+            user_message = user_match.group(1).strip()
+        else:
+            for m in reversed(messages):
+                if m.get("role") == "user":
+                    user_message = str(m.get("content", "")).strip()
+                    break
+
+        if not user_message:
+            user_message = prompt_text.strip()[:1000]
+
+        chosen_toolsets: list[str] = []
+        confidence = 0.95
+        action = "narrow"
+
+        if toolsets_map and user_message:
+            # Step 1: Gate check via Laya noul (is it purely conversational?)
+            gate_questions = {
+                "requires_tools": {
+                    "type": "noul",
+                    "instructions": (
+                        "Does this user request require calling tools/actions (like files, web search, "
+                        "terminal, git, system actions), or is it pure conversational chat/greeting/general knowledge?"
+                    ),
+                }
+            }
+            try:
+                gate_raw = await _call_engine(
+                    "/v1/systemone",
+                    method="POST",
+                    json_body={"state": user_message, "questions": gate_questions},
+                )
+                gate_prob = gate_raw.get("answers", {}).get("requires_tools", {}).get("noul", 0.5)
+            except Exception as e:
+                log.warning("Laya gate check error: %s", e)
+                gate_prob = 0.5
+
+            if gate_prob < 0.35:
+                chosen_toolsets = []
+                action = "no_tools"
+                confidence = round(1.0 - gate_prob, 2)
+            else:
+                # Step 2: Choice classification between toolsets
+                criteria = {k: v[:80] for k, v in list(toolsets_map.items())[:16]}
+                choice_questions = {
+                    "toolset_decision": {
+                        "type": "choice",
+                        "instructions": "Which toolset is needed to fulfill the user's request?",
+                        "criteria": criteria,
+                    }
+                }
+                try:
+                    choice_raw = await _call_engine(
+                        "/v1/systemone",
+                        method="POST",
+                        json_body={"state": user_message, "questions": choice_questions},
+                    )
+                    answer = choice_raw.get("answers", {}).get("toolset_decision", {})
+                    top_choice = answer.get("choice")
+                    probs = answer.get("probabilities", {})
+                    choice_conf = answer.get("confidence", 0.0)
+
+                    if top_choice and top_choice in toolsets_map:
+                        chosen_toolsets.append(top_choice)
+                    for ts, p in probs.items():
+                        if ts != top_choice and p >= 0.22 and ts in toolsets_map:
+                            chosen_toolsets.append(ts)
+                    confidence = max(0.85, round(min(0.99, choice_conf + 0.85), 2))
+                    action = "narrow" if chosen_toolsets else "no_tools"
+                except Exception as e:
+                    log.warning("Laya toolset choice error: %s; failing open to full", e)
+                    chosen_toolsets = ["all"]
+                    action = "full"
+                    confidence = 0.5
+        else:
+            chosen_toolsets = ["all"]
+            action = "full"
+            confidence = 0.5
+
+        content_json = {
+            "confidence": confidence,
+            "action": action,
+            "toolsets": chosen_toolsets,
+            "reason_code": "laya_system1",
+        }
+
+        response_payload = {
+            "id": f"chatcmpl-laya-{int(time.time()*1000)}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(content_json),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": max(1, len(user_message) // 4),
+                "completion_tokens": 20,
+                "total_tokens": max(1, len(user_message) // 4) + 20,
+            },
+        }
+        return JSONResponse(response_payload)
+    except Exception as e:
+        log.error("Error in sidecar_chat_completions: %s", e)
+        err_payload = {
+            "id": f"chatcmpl-laya-err-{int(time.time()*1000)}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "laya-multilingual",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps({"action": "full", "confidence": 0.5, "toolsets": ["all"]}),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        return JSONResponse(err_payload)
 
 
 from mcp.server.transport_security import TransportSecuritySettings

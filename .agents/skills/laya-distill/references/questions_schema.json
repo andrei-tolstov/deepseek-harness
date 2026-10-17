@@ -1,0 +1,48 @@
+{
+  "requires_tools": {
+    "type": "noul",
+    "instructions": "Determine whether fulfilling this user request requires executing external tools (files, terminal, web, schedule) or if a direct conversational response is appropriate.",
+    "criteria": {
+      "true": "Executing shell, reading or writing files, web queries, interacting with system or background tools",
+      "false": "Pure conversational reply, greeting, general reasoning or explanation without tool execution"
+    }
+  },
+  "tool_decision": {
+    "type": "choice",
+    "instructions": "Determine whether external tools or terminal execution are required to fulfill the user request, or if direct conversational response is appropriate.",
+    "criteria": {
+      "direct_chat": "Conversational reply, reasoning, code explanation without tool execution",
+      "execute_tools": "Executing shell, reading or writing files, web queries, or interacting with tools"
+    }
+  },
+  "category": {
+    "type": "choice",
+    "instructions": "Select the primary category of tool required for this task.",
+    "criteria": {
+      "filesystem": "File operations: reading, writing, editing, listing or patching files",
+      "terminal_execution": "Running bash, terminal, shell commands, scripts and process execution",
+      "web_and_search": "Web browsing, fetching remote URLs, downloading pages and online searches",
+      "schedule": "Timers, background alarms, daily or cron schedules and reminders",
+      "system": "System utilities, git repositories, workspace configuration and status"
+    }
+  },
+  "difficulty": {
+    "type": "score",
+    "instructions": "How demanding is it to complete this turn well?",
+    "criteria": [
+      "trivial",
+      "simple",
+      "moderate",
+      "demanding",
+      "extreme"
+    ]
+  },
+  "costly_mistake": {
+    "type": "noul",
+    "instructions": "A wrong or sloppy answer or destructive command here would be costly or hard to undo.",
+    "criteria": {
+      "true": "System alteration, destructive commands, file modifications, git push, deployment",
+      "false": "Read-only inspection, search, conversational answer, explanation"
+    }
+  }
+}

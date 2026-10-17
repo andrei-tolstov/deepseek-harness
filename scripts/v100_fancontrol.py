@@ -50,11 +50,23 @@ def set_all_pwm(value):
 
 def get_gpu_temp():
     try:
-        cmd = ['nvidia-smi', '--query-gpu=temperature.gpu', '--format=csv,noheader,nounits']
+        cmd = ['nvidia-smi', '--query-gpu=name,temperature.gpu', '--format=csv,noheader,nounits']
         res = subprocess.check_output(cmd, timeout=3).decode().strip()
-        temps = [int(line.strip()) for line in res.splitlines() if line.strip().isdigit()]
-        if temps:
-            return max(temps)
+        v100_temps = []
+        all_temps = []
+        for line in res.splitlines():
+            parts = line.split(',')
+            if len(parts) >= 2:
+                name, temp_str = parts[0].strip(), parts[1].strip()
+                if temp_str.isdigit():
+                    t = int(temp_str)
+                    all_temps.append(t)
+                    if 'v100' in name.lower():
+                        v100_temps.append(t)
+        if v100_temps:
+            return max(v100_temps)
+        if all_temps:
+            return max(all_temps)
     except Exception:
         pass
     return None

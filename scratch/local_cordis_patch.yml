@@ -1,0 +1,240 @@
+﻿- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+- id: compaction-basic
+  name: "@deepseek-ai/dsh-compaction-basic"
+  config:
+    # Ð”Ð¾Ð¿Ð¾Ð»Ð½Ð¸Ñ‚ÐµÐ»ÑŒÐ½Ñ‹Ð¹ Ð¾Ð±ÑŠÐµÐ¼ Ð¾Ð±ÑŠÐµÐ¼ Ñ‚Ð¾ÐºÐµÐ½Ð¾Ð² 
+    headroomTokens: 32768
+    # Ð¿Ð¾Ñ€Ð¾Ð³ ÑÑ€Ð°Ð±Ð°Ñ‚Ñ‹Ð²Ð°Ð½Ð¸Ñ Ð°Ð²Ñ‚Ð¾-ÑÐ¶Ð°Ñ‚Ð¸Ñ Ð¾Ñ‚ Ð¾ÐºÐ½Ð° ÐºÐ¾Ð½Ñ‚ÐµÐºÑÑ‚Ð° (Ð¿Ð¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ 0.95)
+    thresholdRatio: 0.8
+    # Ð¼Ð¸Ð½Ð¸Ð¼Ð°Ð»ÑŒÐ½Ñ‹Ð¹ Ð¿Ñ€Ð¾Ñ†ÐµÐ½Ñ‚ Ñ‚Ð¾ÐºÐµÐ½Ð¾Ð², ÐºÐ¾Ñ‚Ð¾Ñ€Ñ‹Ðµ Ð´Ð¾Ð»Ð¶Ð½Ñ‹ Ð¾ÑÑ‚Ð°Ñ‚ÑŒÑÑ Ð¿Ð¾ÑÐ»Ðµ ÑÐ¶Ð°Ñ‚Ð¸Ñ
+    retainRatio: 0.16
+    # Ð¼Ð°ÐºÑÐ¸Ð¼Ð°Ð»ÑŒÐ½Ð¾Ðµ ÐºÐ¾Ð»Ð¸Ñ‡ÐµÑÑ‚Ð²Ð¾ Ñ‚Ð¾ÐºÐµÐ½Ð¾Ð² Ð² ÑÐ¶Ð°Ñ‚Ð¾Ð¼ Ð´Ð¸Ð°Ð»Ð¾Ð³Ðµ
+    maxTokens: 32768
+    # ÑƒÑ€Ð¾Ð²ÐµÐ½ÑŒ Ð¼Ñ‹ÑˆÐ»ÐµÐ½Ð¸Ñ Ð¼Ð¾Ð´ÐµÐ»Ð¸ Ð¿Ñ€Ð¸ ÑÐ¶Ð°Ñ‚Ð¸Ð¸ ("off", "low", "medium", "high", "xhigh")
+    reasoningEffort: "medium"
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      omniroute:
+        displayName: omniroute
+        apiKeyEnv: OMNIROUTE_API_KEY
+        api: openai-completions
+        baseURL: http://192.168.50.101:20128/v1
+        models:
+          - id: qwen38/qwen3.8
+            name: Qwen 3.8 27B (Local V100 180K)
+            contextWindow: 180000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+          - id: xkiro/sensenova/sensenova-6.8-flash-lite
+            name: SenseNova 6.8 Flash-Lite
+            contextWindow: 262144
+          - id: xkiro/mistralai/mistral-large-2512
+            name: Mistral Large 3
+            contextWindow: 256000
+          - id: xkiro/qwen/qwen3.8-max:free
+            name: Qwen3.8 Max
+            contextWindow: 1000000
+          - id: xkiro/cohere/command-a-plus
+            name: cohere/command-a-plus
+            contextWindow: 128000
+          - id: xkiro/meituan/longcat-2.5-preview:free
+            name: meituan/longcat-2.5-preview:free
+            contextWindow: 128000
+          - id: xkiro/inclusionai/ling-3.0-flash-sante:free
+            name: inclusionai/ling-3.0-flash-sante:free
+            contextWindow: 128000
+          - id: xkiro/stealth/space-bunny-alpha:free
+            name: stealth/space-bunny-alpha:free
+            contextWindow: 128000
+          - id: xkiro/liquid/lfm-2.5-2.6b:free
+            name: liquid/lfm-2.5-2.6b:free
+            contextWindow: 128000
+          - id: xkiro/apodex/apodex-1.1-mini:free
+            name: apodex/apodex-1.1-mini:free
+            contextWindow: 128000
+          - id: xkiro/dots-studio/dots-3-note-preview:free
+            name: dots-studio/dots-3-note-preview:free
+            contextWindow: 128000
+          - id: bonsai2/bonsai2
+            name: bonsai2
+            contextWindow: 262144
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+          - id: fable/fable-cold-fusion-27b
+            name: Fable Cold Fusion 27B (Local V100 190K)
+            contextWindow: 190000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+      fable:
+        displayName: fable-direct
+        api: openai-completions
+        baseURL: http://192.168.50.101:8083/v1
+        models:
+          - id: fable-cold-fusion-27b
+            name: Fable Cold Fusion (Direct V100 190K)
+            contextWindow: 190000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+      self:
+        displayName: self
+        api: openai-completions
+        baseURL: http://192.168.50.101:8081/v1
+        models:
+          - id: default
+            name: Qwen 3.8 (Direct V100 180K)
+            contextWindow: 180000
+            maxTokens: 32768
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off: null
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+            compat:
+              thinkingFormat: qwen-chat-template
+              supportsReasoningEffort: true
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: omniroute
+    model: qwen38/qwen3.8
+- id: agent-preset-registry
+  name: "@deepseek-ai/dsh-agent-preset-registry"
+  config:
+    default: standard
+    selectedDefault: cordis
+- id: laya
+  name: "dsh-laya"
+  config:
+    sidecarUrl: "http://laya:8787"
+    requestTimeoutMs: 120000
+    lifecycle: never
+    logLevel: info
+- insert:
+    - id: laya-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: laya
+        transport: streamable-http
+        url: "http://laya:8787/mcp"
+        failOnStartupError: false
+- id: permission
+  name: "@deepseek-ai/dsh-permission-presets"
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+    defaultPreset: danger-full-access
+- id: ui-conversation
+  name: "@deepseek-ai/dsh-client-ui-conversation"
+  config:
+    busyEnter: steer
+- insert:
+    - id: mcp-puppeteer
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: puppeteer
+        transport: stdio
+        command: npx
+        args: [ "-y", "@modelcontextprotocol/server-puppeteer" ]
+        env:
+          PUPPETEER_BROWSER_URL: "http://127.0.0.1:9222"
+        failOnStartupError: false
+
+- id: ui-skill-explorer
+  disabled: true
+
+- id: telegram
+  disabled: true
+
+- id: messenger
+  name: '@syncended/dsh-messenger'
+  config:
+    telegram:
+      enabled: true
+      tokenRef: TELEGRAM_BOT_TOKEN
+      allowedChatIds:
+        - '543497683'
+      allowedUserIds:
+        - '543497683'
+      privateChatsOnly: true
+      pollTimeoutSeconds: 30
+      requestTimeoutMs: 15000
+    voice:
+      enabled: true
+      model: small
+      device: auto
+
+- insert:
+    - id: laya-tools
+      name: "dsh-laya-tools"
+      config:
+        sidecarUrl: "http://laya:8787"
+        hierarchical: false
+        categorizationIntervalMs: 86400000
+        maxTools: 50
+        fallbackMode: "pass-all"
+        enabled: true
+- id: subagent
+  name: "@deepseek-ai/dsh-subagent"
+  config:
+    maxActiveSubagents: 1
+

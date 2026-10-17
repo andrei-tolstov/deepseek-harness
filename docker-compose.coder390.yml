@@ -1,0 +1,144 @@
+# ==============================================================================
+# Docker Compose: llama.cpp Server для nerkyor Qwen3.8-27B-Coder390-EfficientThink
+# Специализированная конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+#
+# Ключевые параметры:
+#   - Модель: nerkyor Qwen3.8-27B-Coder390-EfficientThink-Q4LynnStyle-MTP.gguf (~18.27 GiB)
+#   - Движок: ghcr.io/ggml-org/llama.cpp:server-cuda
+#   - Спекулятивное декодирование: Встроенный MTP + опциональный Q8_0 MTP сайдкар
+#   - Vision mmproj: mmproj-Qwen3.8-27B-Q8_0.gguf (~0.63 GB) в оперативной памяти хоста (--no-mmproj-offload)
+#   - KV-кэш: Несжатый FP16 (-ctk f16 -ctv f16) при 180K токенов (~11.25 GiB) или Q8_0 при 262K токенов (~8.50 GiB)
+#   - VRAM суммарно: ~29.5 GiB из 32.0 GiB (Запас: ~2.5 GiB до OOM)
+#   - Изоляция GPU: явный device_ids для защиты от сбоя CUDA Forward Compatibility на гибридных системах (Tesla + Pascal)
+# ==============================================================================
+
+services:
+  coder390-llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: coder390-llama-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${CODER390_PORT:-8084}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - LD_LIBRARY_PATH=/app:${LD_LIBRARY_PATH:-}
+      - CODER390_MODEL_FILE=${CODER390_MODEL_FILE:-Qwen3.8-27B-Coder390-EfficientThink-Q4LynnStyle-MTP.gguf}
+      - CODER390_MMPROJ_FILE=${CODER390_MMPROJ_FILE:-mmproj-Qwen3.8-27B-Q8_0.gguf}
+      - CODER390_DRAFT_MTP_FILE=${CODER390_DRAFT_MTP_FILE:-mtp-Qwen3.8-27B-Coder390-EfficientThink-Q8_0.gguf}
+      - CODER390_ENABLE_MTP=${CODER390_ENABLE_MTP:-true}
+      - CODER390_NO_MMPROJ_OFFLOAD=${CODER390_NO_MMPROJ_OFFLOAD:-true}
+      - CODER390_CPU_THREADS=${CODER390_CPU_THREADS:-16}
+      - CODER390_API_KEY=${CODER390_API_KEY:-}
+      - CODER390_ALIAS=${CODER390_ALIAS:-coder390-27b,coder390,qwen3.8-coder390,default}
+      - CODER390_CTX_SIZE=${CODER390_CTX_SIZE:-180000}
+      - CODER390_BATCH_SIZE=${CODER390_BATCH_SIZE:-4096}
+      - CODER390_UBATCH_SIZE=${CODER390_UBATCH_SIZE:-1024}
+      - CODER390_CACHE_K=${CODER390_CACHE_K:-f16}
+      - CODER390_CACHE_V=${CODER390_CACHE_V:-f16}
+      - CODER390_N_GPU_LAYERS=${CODER390_N_GPU_LAYERS:-999}
+      - CODER390_SPEC_DRAFT_N_MAX=${CODER390_SPEC_DRAFT_N_MAX:-3}
+      - CODER390_ENABLE_THINKING=${CODER390_ENABLE_THINKING:-true}
+      - CODER390_REASONING_EFFORT=${CODER390_REASONING_EFFORT:-high}
+      - CODER390_TEMP=${CODER390_TEMP:-0.65}
+      - CODER390_TOP_P=${CODER390_TOP_P:-0.95}
+      - CODER390_TOP_K=${CODER390_TOP_K:-20}
+      - CODER390_MIN_P=${CODER390_MIN_P:-0.05}
+      - CODER390_REPEAT_PENALTY=${CODER390_REPEAT_PENALTY:-1.0}
+      - CODER390_EXTRA_ARGS=${CODER390_EXTRA_ARGS:---load-mode auto --slots 1}
+    volumes:
+      - "${CODER390_MODELS_DIR:-/root/model/coder390}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [nerkyor Coder390 EfficientThink llama-server] Инициализация на V100..."
+        echo "======================================================================"
+
+        SERVER_BIN="$$(which llama-server 2>/dev/null || which /app/llama-server 2>/dev/null || find / -name llama-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник llama-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${CODER390_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден по пути: $$MODEL_PATH"
+          echo "Убедитесь, что модель скачана в $${CODER390_MODELS_DIR:-/root/model/coder390}"
+          exit 1
+        fi
+
+        ARGS="--host 0.0.0.0 --port 8080"
+        ARGS="$$ARGS -m $$MODEL_PATH"
+
+        # Мультимодальный проектор (mmproj) в системной RAM CPU
+        MMPROJ_PATH="/models/$${CODER390_MMPROJ_FILE}"
+        if [ -n "$$CODER390_MMPROJ_FILE" ] && [ -f "$$MMPROJ_PATH" ]; then
+          echo "Подключение мультимодального проектора (mmproj): $$MMPROJ_PATH"
+          ARGS="$$ARGS --mmproj $$MMPROJ_PATH"
+          if [ "$$CODER390_NO_MMPROJ_OFFLOAD" = "true" ]; then
+            echo "Vision Tower принудительно исполняется в RAM хоста (--no-mmproj-offload)"
+            ARGS="$$ARGS --no-mmproj-offload"
+          fi
+          if [ -n "$$CODER390_CPU_THREADS" ]; then
+            ARGS="$$ARGS --threads $$CODER390_CPU_THREADS"
+          fi
+        fi
+
+        # Спекулятивное декодирование MTP (внешний сайдкар или встроенный NextN head)
+        DRAFT_PATH="/models/$${CODER390_DRAFT_MTP_FILE}"
+        if [ "$$CODER390_ENABLE_MTP" = "true" ] && [ -f "$$DRAFT_PATH" ]; then
+          echo "Подключение внешнего Q8_0 MTP сайдкара: $$DRAFT_PATH"
+          ARGS="$$ARGS --spec-draft-model $$DRAFT_PATH --spec-draft-ngl all --spec-type draft-mtp --spec-draft-n-max $${CODER390_SPEC_DRAFT_N_MAX:-3} --spec-draft-p-min 0"
+        elif [ "$$CODER390_ENABLE_MTP" = "true" ]; then
+          echo "Использование встроенного NextN head (--spec-type draft-mtp)"
+          ARGS="$$ARGS --spec-type draft-mtp --spec-draft-n-max $${CODER390_SPEC_DRAFT_N_MAX:-3} --spec-draft-p-min 0"
+        fi
+
+        ARGS="$$ARGS -ngl $${CODER390_N_GPU_LAYERS}"
+        ARGS="$$ARGS -c $${CODER390_CTX_SIZE}"
+        ARGS="$$ARGS --flash-attn on"
+        ARGS="$$ARGS -b $${CODER390_BATCH_SIZE} -ub $${CODER390_UBATCH_SIZE}"
+        ARGS="$$ARGS -ctk $${CODER390_CACHE_K} -ctv $${CODER390_CACHE_V}"
+        ARGS="$$ARGS --parallel 1 --timeout 86400"
+        ARGS="$$ARGS --jinja"
+
+        if [ "$$CODER390_ENABLE_THINKING" = "false" ]; then
+          ARGS="$$ARGS --reasoning off"
+        else
+          ARGS="$$ARGS --reasoning on --reasoning-format deepseek --reasoning-effort $${CODER390_REASONING_EFFORT:-high} --reasoning-preserve"
+        fi
+
+        ARGS="$$ARGS --temp $${CODER390_TEMP} --top-p $${CODER390_TOP_P} --top-k $${CODER390_TOP_K} --min-p $${CODER390_MIN_P} --repeat-penalty $${CODER390_REPEAT_PENALTY}"
+
+        if [ -n "$$CODER390_ALIAS" ]; then
+          ARGS="$$ARGS --alias $$CODER390_ALIAS"
+        fi
+
+        if [ -n "$$CODER390_API_KEY" ]; then
+          ARGS="$$ARGS --api-key $$CODER390_API_KEY"
+        fi
+
+        if [ -n "$$CODER390_EXTRA_ARGS" ]; then
+          ARGS="$$ARGS $$CODER390_EXTRA_ARGS"
+        fi
+
+        echo "======================================================================"
+        echo " Запуск llama-server: $$SERVER_BIN $$ARGS"
+        echo "======================================================================"
+        eval exec "$$SERVER_BIN" "$$ARGS"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
