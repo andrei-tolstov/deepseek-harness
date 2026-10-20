@@ -226,4 +226,36 @@
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ```
 
+## Hermes Gateway Platform Breakers & Port Conflicts
+- **Фатальный статус платформ в Hermes Gateway (`api_server_port_in_use`)**:
+  Если платформа в Hermes Gateway при старте натыкается на конфликт порта (например, старый Docker-контейнер занимает 8642), шлюз переводит платформу в состояние `fatal` и сохраняет его в `gateway_state.json`. Этот предохранитель (circuit breaker) не сбрасывается автоматически простым рестартом, чтобы предотвратить бесконечные утечки дескрипторов.
+  - **Правило**: После освобождения порта остановить шлюз (`systemctl --user stop hermes-gateway`), сбросить состояние (`rm -f /root/.hermes/gateway_state.json`) или возобновить платформу командой `/platform resume <name>`, затем запустить сервис заново.
+
+## Windows PowerShell Quote Interpolation in SSH
+- **Парсинг скобок и кавычек в PowerShell при вызове SSH**:
+  При передаче встроенных скриптов через `ssh ... "cat << 'EOF' ... (Text) ... EOF"` в PowerShell строки со скобками внутри двойных кавычек интерпретируются PowerShell как вызов субкоманды/cmdlet (например, `The term 'DeepSeek' is not recognized`).
+  - **Правило**: Использовать `scp` для передачи структурированных конфигурационных файлов или экранировать кавычки через Here-String / Base64.
+
+## Qwen Jinja Chat Template & Multi-Step Tool Loops ("No user query found in messages")
+- **Исключение Jinja в llama-server при агентных и tool-вызовах**:
+  В нативном `tokenizer.chat_template` моделей Qwen (Qwen 2.5 / Qwen 3.8 / HauhauCS) встроена строгая проверка наличия не-tool пользовательского сообщения:
+  ```jinja
+  {%- if ns.multi_step_tool %}
+      {{- raise_exception('No user query found in messages.') }}
+  {%- endif %}
+  ```
+  В агентных сценариях (Hermes Agent, DeepSeek Harness, Roo, Cline, OmniRoute), когда после вызова инструмента возвращаются сообщения с ролью `tool`, либо при фоновых задачах / сжатии контекста, в списке сообщений может отсутствовать завершающий или предшествующий пользовательский запрос. Встроенный Jinja-движок `llama-server` выбрасывает исключение `Error: Jinja Exception: No user query found in messages.`, сервер возвращает `HTTP 500 server_error`, а шлюзы (OmniRoute) фиксируют сбой учетной записи/модели (`Preserving last upstream error after credential exhaustion`). Дополнительно `{{- raise_exception('System message must be at the beginning.') }}` блокирует запросы со вставками системных инструкций в середину контекста.
+- **Правило**:
+  1. Извлекать или переопределять шаблон модели в файл `chat_template.jinja`.
+  2. Удалять жесткую проверку `{%- if ns.multi_step_tool %} raise_exception(...) {% endif %}`, чтобы разрешить выполнение запросов с `[system, assistant, tool]` без обязательного `user`-запроса.
+  3. В проверке `message.role == "system"` поддерживать также `developer` (`message.role in ("system", "developer")`), а при `not loop.first` рендерить сообщение в разметку `<|im_start|>system\n...<|im_end|>\n` вместо вызова `raise_exception`.
+  4. В `docker-compose` монтировать шаблон и передавать в `llama-server` флаг `--chat-template-file /path/to/chat_template.jinja`.
+- **Поддержка значений reasoning_effort ('high' vs 'xhigh') в шаблоне Jinja**:
+  В кастомных шаблонах Qwen/HauhauCS валидация `reasoning_effort` по умолчанию жестко ограничивает значения списком `('xhigh', 'medium', 'low')`. При передаче стандартного для OpenAI API значения `high` Jinja выбрасывает исключение `Unexpected reasoning effort high`.
+  - **Правило**: В `chat_template.jinja` явно поддерживать оба варианта: `resolved_reasoning_effort in ('xhigh', 'high')`.
+
+## OmniRoute Routing Combos & API Key Catalog Scope
+- **Отображение комбо-роутеров в каталоге `/v1/models`**:
+  По умолчанию в таблице `api_keys` поле `catalog_scope` имеет значение `'models'`, из-за чего эндпоинт `/v1/models` возвращает только провайдерные модели и скрывает маршрутизирующие комбо (`combos`).
+  - **Правило**: Для ключей API, используемых клиентами с выпадающими списками моделей (DSH, OpenWebUI, Cursor), устанавливать `catalog_scope = 'all'` и добавлять имя комбо как в `allowed_models`, так и в `allowed_combos`.
 

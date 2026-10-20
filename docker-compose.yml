@@ -1,201 +1,52 @@
 services:
-  # ---------------------------------------------------------------------------
-  # Redis: кэш и хранилище квот / rate limit для OmniRoute
-  # ---------------------------------------------------------------------------
-  redis:
-    image: docker.io/library/redis:7-alpine
-    container_name: omniroute-redis
-    restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - omniroute-redis-data:/data
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # OmniRoute: шлюз / роутер AI моделей (OpenAI, DeepSeek, Anthropic, OpenRouter)
-  # ---------------------------------------------------------------------------
-  omniroute:
-    image: diegosouzapw/omniroute:latest
-    container_name: omniroute
-    restart: unless-stopped
-    stop_grace_period: 40s
-    environment:
-      - DATA_DIR=/app/data
-      - REDIS_URL=redis://redis:6379
-      - APP_BIND_HOST=${HOST_BIND_IP:-127.0.0.1}
-      - DASHBOARD_PORT=${OMNIROUTE_DASHBOARD_PORT:-20128}
-      - API_PORT=${OMNIROUTE_API_PORT:-20129}
-      - LIVE_WS_PORT=${OMNIROUTE_LIVE_WS_PORT:-20132}
-      - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-}
-      - OMNIROUTE_MEMORY_MB=${OMNIROUTE_MEMORY_MB:-2048}
-      - REQUEST_TIMEOUT_MS=${REQUEST_TIMEOUT_MS:-1200000}
-      - FETCH_TIMEOUT_MS=${FETCH_TIMEOUT_MS:-1200000}
-      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-1200000}
-      - STREAM_ACTIVE_TIMEOUT_MS=${STREAM_ACTIVE_TIMEOUT_MS:-1800000}
-      - STREAM_READINESS_TIMEOUT_MS=${STREAM_READINESS_TIMEOUT_MS:-1200000}
-      - STREAM_READINESS_MAX_TIMEOUT_MS=${STREAM_READINESS_MAX_TIMEOUT_MS:-1200000}
-      - TZ=${TZ:-Europe/Moscow}
-    ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_DASHBOARD_PORT:-20128}:${OMNIROUTE_DASHBOARD_PORT:-20128}"
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_API_PORT:-20129}:${OMNIROUTE_API_PORT:-20129}"
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_LIVE_WS_PORT:-20132}:${OMNIROUTE_LIVE_WS_PORT:-20132}"
-    volumes:
-      - omniroute-data:/app/data
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: [ "CMD", "node", "healthcheck.mjs" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # Workspace-init: автоматическая настройка прав доступа для каталога workspace
-  # ---------------------------------------------------------------------------
-  workspace-init:
-    image: docker.io/library/alpine:latest
-    container_name: deepseek-workspace-init
-    restart: "no"
-    user: "0:0"
-    command: sh -c "chown -R 1000:1000 /workspace && chmod 775 /workspace"
-    volumes:
-      - ${WORKSPACE_DIR:-./workspace}:/workspace
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # VS Code (code-server): веб-редактор для удобного доступа к workspace
-  # ---------------------------------------------------------------------------
-  vscode:
-    image: docker.io/codercom/code-server:latest
-    container_name: deepseek-vscode
-    restart: unless-stopped
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        if grep -q "/etc/code-server" /home/coder/.local/share/code-server/coder.json 2>/dev/null; then
-          rm -f /home/coder/.local/share/code-server/coder.json
-        fi
-        cp -u /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace 2>/dev/null || cp /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace
-        exec code-server \
-          --bind-addr 0.0.0.0:8080 \
-          --auth "$${VSCODE_AUTH:-none}" \
-          $${VSCODE_CERT:+--cert} \
-          --disable-telemetry \
-          --disable-update-check \
-          --disable-workspace-trust \
-          /home/coder/deepseek.code-workspace
-    ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${VSCODE_PORT:-8443}:8080"
-    environment:
-      - TZ=${TZ:-Europe/Moscow}
-      - PASSWORD=${VSCODE_PASSWORD:-}
-      - VSCODE_AUTH=${VSCODE_AUTH:-none}
-      - VSCODE_CERT=${VSCODE_CERT:-}
-      - DOCKER_USER=coder
-    volumes:
-      - vscode-data:/home/coder
-      - ${WORKSPACE_DIR:-./workspace}:/workspace
-      - ${DSH_DIR:-/root/harness/dsh}:/dsh
-      - ${HERMES_DIR:-/root/harness/hermes}:/hermes
-      - ./deepseek.code-workspace:/etc/code-server/deepseek.code-workspace:ro
-    depends_on:
-      workspace-init:
-        condition: service_completed_successfully
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # Laya: System 1 Decision Studio & REST API (быстрый инференс на ggmlc)
-  # Собрано из форка https://github.com/andrei-tolstov/ggmlc
-  # ---------------------------------------------------------------------------
-  laya:
+  qwen38-v100:
     build:
-      context: ./laya
-      dockerfile: Dockerfile
-    container_name: deepseek-laya
+      context: ./ninfer-v100
+      dockerfile: ../Dockerfile.v100
+    image: ninfer-v100:cuda12.8
+    container_name: qwen38-coder390-v100
     restart: unless-stopped
     ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${LAYA_PORT:-8080}:8080"
-      - "${HOST_BIND_IP:-127.0.0.1}:${LAYA_MCP_PORT:-8787}:8787"
-    environment:
-      - PORT=8080
-      - MCP_PORT=${LAYA_MCP_PORT:-8787}
-      - DEVICE=${LAYA_DEVICE:-cuda}
-      - MODEL_PATH=/models/laya_multilingual_f16.gguf
-      - EXTRA_FLAGS=${LAYA_EXTRA_FLAGS:---cuda-graph}
-      - TZ=${TZ:-Europe/Moscow}
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    shm_size: "16gb"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: [ 'GPU-7b86aac7-cea5-5401-ceb0-463b5df668b1' ]
-              capabilities: [ gpu ]
-    volumes:
-      - ./models:/models
-      - /usr/lib/x86_64-linux-gnu/libcuda.so.1:/lib/x86_64-linux-gnu/libcuda.so.1:ro
-      - ./laya/mcp_server.py:/app/mcp_server.py:ro
-    networks:
-      - deepseek-net
-    healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health && curl -f http://localhost:8787/health" ]
-      interval: 20s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-
-  # ---------------------------------------------------------------------------
-  # Backup: автоматическое резервное копирование данных на Google Диск через rclone
-  # ---------------------------------------------------------------------------
-  backup:
-    build:
-      context: ./backup
-      dockerfile: Dockerfile
-    container_name: deepseek-backup
-    restart: unless-stopped
-    environment:
-      - TZ=${TZ:-Europe/Moscow}
-      - RCLONE_CONFIG=/config/rclone/rclone.conf
-      - RCLONE_REMOTE=${RCLONE_REMOTE:-gdrive}
-      - RCLONE_DEST_FOLDER=${RCLONE_DEST_FOLDER:-backups/deepseek-stack}
-      - RETENTION_DAYS=${RETENTION_DAYS:-14}
-      - MIN_BACKUPS_TO_KEEP=${MIN_BACKUPS_TO_KEEP:-3}
-      - BACKUP_CRON_SCHEDULE=${BACKUP_CRON_SCHEDULE:-0 3 * * *}
-      - BACKUP_ON_STARTUP=${BACKUP_ON_STARTUP:-false}
-    volumes:
-      # Тома и внешние каталоги для резервного копирования (в режиме только для чтения)
-      - omniroute-data:/data/omniroute:ro
-      - ${HERMES_DIR:-/root/harness/hermes}:/data/hermes:ro
-      - ${DSH_DIR:-/root/harness/dsh}:/data/dsh:ro
-      # Конфигурация и учетные данные rclone
-      - ./backup:/config/rclone
-    depends_on:
-      - omniroute
-    networks:
-      - deepseek-net
-
-networks:
-  deepseek-net:
-    name: deepseek-net
-    driver: bridge
-
-volumes:
-  omniroute-data:
-    name: deepseek_omniroute_data
-  omniroute-redis-data:
-    name: deepseek_redis_data
-  vscode-data:
-    name: deepseek_vscode_data
+              device_ids: ["0"]
+              capabilities: [gpu]
+    command:
+      - "/models/model_v100.ninfer"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--max-context"
+      - "240000"
+      - "--prefill-chunk"
+      - "2048"
+      - "--kv-capacity"
+      - "auto"
+      - "--max-concurrency"
+      - "1"
+      - "--kv-dtype"
+      - "int8"
+      - "--device-state-slots"
+      - "1"
+      - "--host-state-slots"
+      - "8"
+      - "--host-kv-mib"
+      - "8192"
+      - "--spec"
+      - "mtp"
+      - "--draft-tokens"
+      - "3"
+      - "--lm-head-draft"
+      - "--preserve-thinking"
