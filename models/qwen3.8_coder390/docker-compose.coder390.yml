@@ -1,0 +1,124 @@
+services:
+  coder390-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.v100
+    image: ninfer-v100:cuda12.8
+    container_name: coder390-llama-server
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${CODER390_PORT:-8084}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - CODER390_MODEL_FILE=${CODER390_MODEL_FILE:-model_v100.ninfer}
+      - CODER390_ALIAS=${CODER390_ALIAS:-coder390-27b}
+      - CODER390_API_KEY=${CODER390_API_KEY:-}
+      # 204800 (200K) для баланса VRAM с буферами Vision и MTP на V100 32GB
+      - CODER390_MAX_CONTEXT=${CODER390_MAX_CONTEXT:-204800}
+      - CODER390_KV_CAPACITY=${CODER390_KV_CAPACITY:-auto}
+      - CODER390_MAX_CONCURRENCY=${CODER390_MAX_CONCURRENCY:-1}
+      - CODER390_KV_DTYPE=${CODER390_KV_DTYPE:-int8}
+      - CODER390_PREFILL_CHUNK=${CODER390_PREFILL_CHUNK:-2048}
+      - CODER390_DEVICE_STATE_SLOTS=${CODER390_DEVICE_STATE_SLOTS:-1}
+      - CODER390_HOST_STATE_SLOTS=${CODER390_HOST_STATE_SLOTS:-8}
+      - CODER390_HOST_KV_MIB=${CODER390_HOST_KV_MIB:-8192}
+      # Таймаут ожидания очереди/подготовки запроса: 20 минут = 1200000 мс (дефолт ninfer: 30000)
+      - CODER390_PENDING_TIMEOUT_MS=${CODER390_PENDING_TIMEOUT_MS:-1200000}
+      - CODER390_SPEC_BACKEND=${CODER390_SPEC_BACKEND:-mtp}
+      - CODER390_SPEC_DRAFT_TOKENS=${CODER390_SPEC_DRAFT_TOKENS:-3}
+      - CODER390_ENABLE_THINKING=${CODER390_ENABLE_THINKING:-true}
+      - CODER390_PRESERVE_THINKING=${CODER390_PRESERVE_THINKING:-true}
+      # Параметры Vision (для пакета Qwen3.8-27B-Coder390-EfficientThink-NVFP4-W4A4-MTP-NInferV2.ninfer)
+      - CODER390_ENABLE_VISION=${CODER390_ENABLE_VISION:-true}
+      - CODER390_MEDIA_CACHE_MIB=${CODER390_MEDIA_CACHE_MIB:-512}
+      - CODER390_MEDIA_LIVE_MIB=${CODER390_MEDIA_LIVE_MIB:-1024}
+      - CODER390_MEDIA_PREPROCESS_THREADS=${CODER390_MEDIA_PREPROCESS_THREADS:-4}
+      - CODER390_EXTRA_ARGS=${CODER390_EXTRA_ARGS:-}
+    volumes:
+      - "${CODER390_MODELS_DIR:-/root/model/coder390}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [NInfer V2 Vision+MTP] Запуск nerkyor Qwen3.8 Coder390 на Tesla V100"
+        echo "======================================================================"
+
+        SERVER_BIN="/usr/local/bin/ninfer-serve"
+        MODEL_PATH="/models/$${CODER390_MODEL_FILE}"
+
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "Файл $$MODEL_PATH не найден, ищем подходящий V2 MTP+Vision файл..."
+          ALT_MODEL="$$(find /models -type f -name '*NInferV2*.ninfer' | head -n 1)"
+          if [ -n "$$ALT_MODEL" ]; then
+            MODEL_PATH="$$ALT_MODEL"
+          else
+            echo "ОШИБКА: Файл модели V2 с поддержкой Vision не найден в /models!"
+            exit 1
+          fi
+        fi
+
+        ARGS="$$MODEL_PATH --host 0.0.0.0 --port 8080"
+
+        if [ -n "$$CODER390_ALIAS" ]; then
+          ARGS="$$ARGS --model-id $$CODER390_ALIAS"
+        fi
+
+        if [ -n "$$CODER390_API_KEY" ]; then
+          ARGS="$$ARGS --api-key $$CODER390_API_KEY"
+        fi
+
+        ARGS="$$ARGS --max-context $${CODER390_MAX_CONTEXT:-204800}"
+        ARGS="$$ARGS --kv-capacity $${CODER390_KV_CAPACITY:-auto}"
+        ARGS="$$ARGS --max-concurrency $${CODER390_MAX_CONCURRENCY:-1}"
+        ARGS="$$ARGS --kv-dtype $${CODER390_KV_DTYPE:-int8}"
+        ARGS="$$ARGS --prefill-chunk $${CODER390_PREFILL_CHUNK:-2048}"
+        ARGS="$$ARGS --device-state-slots $${CODER390_DEVICE_STATE_SLOTS:-1}"
+        ARGS="$$ARGS --host-state-slots $${CODER390_HOST_STATE_SLOTS:-8}"
+        ARGS="$$ARGS --host-kv-mib $${CODER390_HOST_KV_MIB:-8192}"
+        ARGS="$$ARGS --pending-timeout-ms $${CODER390_PENDING_TIMEOUT_MS:-1200000}"
+
+        if [ "$${CODER390_SPEC_BACKEND}" != "none" ]; then
+          ARGS="$$ARGS --spec $${CODER390_SPEC_BACKEND:-mtp} --draft-tokens $${CODER390_SPEC_DRAFT_TOKENS:-3} --lm-head-draft"
+        fi
+
+        if [ "$$CODER390_ENABLE_THINKING" = "false" ]; then
+          ARGS="$$ARGS --no-thinking"
+        elif [ "$$CODER390_PRESERVE_THINKING" = "true" ]; then
+          ARGS="$$ARGS --preserve-thinking"
+        fi
+
+        # Включение мультимодального режима (Vision)
+        if [ "$$CODER390_ENABLE_VISION" = "true" ]; then
+          ARGS="$$ARGS --vision"
+          ARGS="$$ARGS --media-cache-mib $${CODER390_MEDIA_CACHE_MIB:-512}"
+          ARGS="$$ARGS --media-live-mib $${CODER390_MEDIA_LIVE_MIB:-1024}"
+          ARGS="$$ARGS --media-preprocess-threads $${CODER390_MEDIA_PREPROCESS_THREADS:-4}"
+        fi
+
+        if [ -n "$$CODER390_EXTRA_ARGS" ]; then
+          ARGS="$$ARGS $$CODER390_EXTRA_ARGS"
+        fi
+
+        echo "Запуск: $$SERVER_BIN $$ARGS"
+        exec $$SERVER_BIN $$ARGS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ "${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}" ]
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/v1/models >/dev/null || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s

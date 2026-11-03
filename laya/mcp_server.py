@@ -40,27 +40,36 @@ server = MCPServer(
 )
 
 
+_http_client: Optional[httpx.AsyncClient] = None
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=60.0)
+    return _http_client
+
+
 async def _call_engine(endpoint: str, method: str = "GET", json_body: Any = None) -> dict[str, Any]:
     url = f"{LAYA_ENGINE_URL.rstrip('/')}{endpoint}"
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    client = _get_http_client()
+    try:
+        if method == "POST":
+            resp = await client.post(url, json=json_body)
+        else:
+            resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        log.error("Laya engine HTTP error %s for %s: %s", e.response.status_code, url, e.response.text)
         try:
-            if method == "POST":
-                resp = await client.post(url, json=json_body)
-            else:
-                resp = await client.get(url)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            log.error("Laya engine HTTP error %s for %s: %s", e.response.status_code, url, e.response.text)
-            try:
-                err_data = e.response.json()
-                msg = err_data.get("error", {}).get("message", str(e))
-            except Exception:
-                msg = e.response.text or str(e)
-            raise RuntimeError(f"Laya engine error (HTTP {e.response.status_code}): {msg}") from e
-        except Exception as e:
-            log.error("Failed to connect to Laya engine at %s: %s", url, e)
-            raise RuntimeError(f"Cannot reach Laya engine at {url}: {e}") from e
+            err_data = e.response.json()
+            msg = err_data.get("error", {}).get("message", str(e))
+        except Exception:
+            msg = e.response.text or str(e)
+        raise RuntimeError(f"Laya engine error (HTTP {e.response.status_code}): {msg}") from e
+    except Exception as e:
+        log.error("Failed to connect to Laya engine at %s: %s", url, e)
+        raise RuntimeError(f"Cannot reach Laya engine at {url}: {e}") from e
 
 
 def _estimate_tokens(text: str) -> int:
@@ -452,7 +461,7 @@ async def sidecar_chat_completions(request: Request) -> JSONResponse:
                     for ts, p in probs.items():
                         if ts != top_choice and p >= 0.22 and ts in toolsets_map:
                             chosen_toolsets.append(ts)
-                    confidence = max(0.85, round(min(0.99, choice_conf + 0.85), 2))
+                    confidence = round(float(choice_conf), 4) if choice_conf else 0.5
                     action = "narrow" if chosen_toolsets else "no_tools"
                 except Exception as e:
                     log.warning("Laya toolset choice error: %s; failing open to full", e)

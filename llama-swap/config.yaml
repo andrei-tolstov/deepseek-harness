@@ -1,0 +1,123 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/main/config-schema.json
+
+healthCheckTimeout: 180
+unloadTimeout: 15
+
+# Предзагрузка основной модели при старте
+hooks:
+  on_startup:
+    preload:
+      - "coder390"
+
+models:
+  coder390:
+    name: "Qwen3.8 27B Coder390 EfficientThink"
+    proxy: "http://192.168.50.38:8084"
+    cmd: >
+      sh -c "docker stop fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a coder390-llama-server"
+    cmdStop: "docker stop -t 5 coder390-llama-server"
+    checkEndpoint: "/health"
+    useModelName: "coder390-27b"
+    ttl: 0
+    aliases:
+      - "coder390-27b"
+      - "coder390"
+      - "coder"
+      - "qwen3.8-coder390"
+      - "default"
+    capabilities:
+      in: ["text", "image"]
+      out: ["text"]
+      tools: true
+      context: 180000
+
+  fable:
+    name: "DavidAU Qwen3.8 27B Fable Cold Fusion"
+    proxy: "http://192.168.50.38:8083"
+    cmd: >
+      sh -c "docker stop coder390-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a fable-llama-server"
+    cmdStop: "docker stop -t 5 fable-llama-server"
+    checkEndpoint: "/health"
+    useModelName: "fable-cold-fusion-27b"
+    ttl: 1200
+    aliases:
+      - "fable-cold-fusion-27b"
+      - "fable"
+      - "fable-27b"
+    capabilities:
+      in: ["text", "image"]
+      out: ["text"]
+      tools: true
+      context: 190000
+
+  qwen38:
+    name: "HauhauCS Qwen3.8 27B Aggressive MTP"
+    proxy: "http://192.168.50.38:8081"
+    cmd: >
+      sh -c "docker stop coder390-llama-server fable-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a qwen38-llama-server"
+    cmdStop: "docker stop -t 5 qwen38-llama-server"
+    checkEndpoint: "/health"
+    useModelName: "qwen3.8-27b"
+    ttl: 1200
+    aliases:
+      - "qwen3.8"
+      - "qwen3.8-27b"
+      - "qwen38"
+    capabilities:
+      in: ["text", "image"]
+      out: ["text"]
+      tools: true
+      context: 180000
+
+  bonsai2:
+    name: "PrismML Ternary Bonsai 2 27B Heretic"
+    proxy: "http://192.168.50.38:8082"
+    cmd: >
+      sh -c "docker stop coder390-llama-server fable-llama-server qwen38-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a bonsai2-llama-server"
+    cmdStop: "docker stop -t 5 bonsai2-llama-server"
+    checkEndpoint: "/health"
+    useModelName: "bonsai2-27b"
+    ttl: 1200
+    aliases:
+      - "bonsai2-27b"
+      - "bonsai2"
+      - "ternary-bonsai"
+    capabilities:
+      in: ["text", "image"]
+      out: ["text"]
+      tools: true
+      context: 262144
+
+  fluxed-up:
+    name: "FLUX.1 Dev Fluxed Up"
+    proxy: "http://192.168.50.38:8085"
+    cmd: >
+      sh -c "docker stop coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server juggernaut-sd-server 2>/dev/null; exec docker start -a fluxed-up-sd-server"
+    cmdStop: "docker stop -t 5 fluxed-up-sd-server"
+    checkEndpoint: "/"
+    useModelName: "fluxed-up"
+    ttl: 5
+    aliases:
+      - "fluxed-up"
+      - "flux"
+      - "flux-dev"
+    capabilities:
+      in: ["text"]
+      out: ["image"]
+
+  juggernaut-xl:
+    name: "Juggernaut XL v9 RunDiffusionPhoto v2"
+    proxy: "http://192.168.50.38:8086"
+    cmd: >
+      sh -c "docker stop coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server 2>/dev/null; exec docker start -a juggernaut-sd-server"
+    cmdStop: "docker stop -t 5 juggernaut-sd-server"
+    checkEndpoint: "/"
+    useModelName: "juggernaut-xl"
+    ttl: 5
+    aliases:
+      - "juggernaut-xl"
+      - "juggernaut"
+      - "sdxl"
+    capabilities:
+      in: ["text"]
+      out: ["image"]

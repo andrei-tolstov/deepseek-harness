@@ -1,0 +1,158 @@
+# ==============================================================================
+# Docker Compose: llama.cpp Server для HauhauCS Qwen3.8-27B-Uncensored-Aggressive
+# Специализированная конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+#
+# Ключевые параметры:
+#   - Модель: Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf (~16.69 GiB)
+#   - Спекулятивное декодирование: Встроенный NextN head (--spec-type draft-mtp, FastMTP отключен)
+#   - Vision mmproj: mmproj-BF16 (~0.93 GB) в оперативной памяти хоста (--no-mmproj-offload)
+#   - KV-кэш: FP16 (-ctk f16 -ctv f16), 64.0 KiB / токен
+#   - Контекст: 131 072 токена (128K, -c 131072) -> 8.00 GiB KV-кэш
+#   - Batch/Ubatch: batch=2048, ubatch=1024
+#   - VRAM суммарно: ~26.79 GiB из 31.60 GiB доступных
+#   - Запас до OOM: +4.81 GiB (+5.21 GiB от физической 32GB)
+# ==============================================================================
+
+services:
+  qwen38-llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: qwen38-llama-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${QWEN_PORT:-8081}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - QWEN_MODEL_FILE=${QWEN_MODEL_FILE:-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf}
+      - QWEN_MMPROJ_FILE=${QWEN_MMPROJ_FILE:-mmproj-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-BF16.gguf}
+      - QWEN_FASTMTP_FILE=${QWEN_FASTMTP_FILE:-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-FastMTP-32K.gguf}
+      - QWEN_ENABLE_MTP=${QWEN_ENABLE_MTP:-true}
+      - QWEN_ENABLE_FASTMTP=${QWEN_ENABLE_FASTMTP:-false}
+      - QWEN_NO_MMPROJ_OFFLOAD=${QWEN_NO_MMPROJ_OFFLOAD:-true}
+      - QWEN_CPU_THREADS=${QWEN_CPU_THREADS:-8}
+      - QWEN_API_KEY=${QWEN_API_KEY:-}
+      - QWEN_ALIAS=${QWEN_ALIAS:-qwen3.8-27b,qwen3.8,default}
+      - QWEN_CTX_SIZE=${QWEN_CTX_SIZE:-131072}
+      - QWEN_BATCH_SIZE=${QWEN_BATCH_SIZE:-2048}
+      - QWEN_UBATCH_SIZE=${QWEN_UBATCH_SIZE:-1024}
+      - QWEN_CACHE_K=${QWEN_CACHE_K:-f16}
+      - QWEN_CACHE_V=${QWEN_CACHE_V:-f16}
+      - QWEN_N_GPU_LAYERS=${QWEN_N_GPU_LAYERS:-999}
+      - QWEN_SPEC_DRAFT_N_MAX=${QWEN_SPEC_DRAFT_N_MAX:-2}
+      - QWEN_ENABLE_THINKING=${QWEN_ENABLE_THINKING:-true}
+      - QWEN_REASONING_EFFORT=${QWEN_REASONING_EFFORT:-xhigh}
+      - QWEN_CHAT_TEMPLATE_FILE=${QWEN_CHAT_TEMPLATE_FILE:-chat_template.jinja}
+      - QWEN_EXTRA_ARGS=${QWEN_EXTRA_ARGS:---load-mode auto --slots}
+    volumes:
+      - "${QWEN_MODELS_DIR:-/root/model/qwen3.8}:/models:ro"
+      - "./chat_template.jinja:/chat_template.jinja:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [HauhauCS Qwen3.8-27B llama-server] Инициализация на Tesla V100 32GB"
+        echo "======================================================================"
+
+        SERVER_BIN="$$(which llama-server 2>/dev/null || which /app/llama-server 2>/dev/null || find / -name llama-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник llama-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${QWEN_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден по пути: $$MODEL_PATH"
+          echo "Убедитесь, что модель скачана в $${QWEN_MODELS_DIR:-/root/model/qwen3.8}"
+          exit 1
+        fi
+
+        ARGS="--host 0.0.0.0 --port 8080"
+        ARGS="$$ARGS -m $$MODEL_PATH"
+
+        # Мультимодальный проектор (mmproj) в системной RAM CPU
+        MMPROJ_PATH="/models/$${QWEN_MMPROJ_FILE}"
+        if [ -n "$$QWEN_MMPROJ_FILE" ] && [ -f "$$MMPROJ_PATH" ]; then
+          echo "Подключение мультимодального проектора (mmproj): $$MMPROJ_PATH"
+          ARGS="$$ARGS --mmproj $$MMPROJ_PATH"
+          if [ "$$QWEN_NO_MMPROJ_OFFLOAD" = "true" ]; then
+            echo "Vision Tower принудительно исполняется в RAM хоста (--no-mmproj-offload)"
+            ARGS="$$ARGS --no-mmproj-offload"
+          fi
+          if [ -n "$$QWEN_CPU_THREADS" ]; then
+            ARGS="$$ARGS --threads $$QWEN_CPU_THREADS"
+          fi
+        fi
+
+        # Спекулятивное декодирование MTP
+        if [ "$$QWEN_ENABLE_MTP" = "true" ]; then
+          FASTMTP_PATH="/models/$${QWEN_FASTMTP_FILE}"
+          if [ "$$QWEN_ENABLE_FASTMTP" = "true" ] && [ -f "$$FASTMTP_PATH" ]; then
+            echo "Подключение HauhauCS FastMTP 32K сайдкара: $$FASTMTP_PATH"
+            ARGS="$$ARGS --spec-draft-model $$FASTMTP_PATH"
+            ARGS="$$ARGS --spec-draft-ngl all"
+            ARGS="$$ARGS --spec-type draft-mtp"
+            ARGS="$$ARGS --spec-draft-n-max $${QWEN_SPEC_DRAFT_N_MAX:-3}"
+            ARGS="$$ARGS --spec-draft-p-min 0.0"
+          else
+            echo "Использование встроенного NextN head (--spec-type draft-mtp)"
+            ARGS="$$ARGS --spec-type draft-mtp --spec-draft-n-max $${QWEN_SPEC_DRAFT_N_MAX:-2} --spec-draft-p-min 0.0"
+          fi
+        else
+          echo "MTP спекулятивное декодирование: ОТКЛЮЧЕНО"
+        fi
+
+        ARGS="$$ARGS -ngl $${QWEN_N_GPU_LAYERS}"
+        ARGS="$$ARGS -c $${QWEN_CTX_SIZE}"
+        ARGS="$$ARGS --flash-attn on"
+        ARGS="$$ARGS -b $${QWEN_BATCH_SIZE} -ub $${QWEN_UBATCH_SIZE}"
+        ARGS="$$ARGS -ctk $${QWEN_CACHE_K} -ctv $${QWEN_CACHE_V}"
+        ARGS="$$ARGS --parallel 1 --timeout 86400"
+        ARGS="$$ARGS --jinja"
+
+        CHAT_TEMPLATE_PATH="/models/$${QWEN_CHAT_TEMPLATE_FILE:-chat_template.jinja}"
+        if [ ! -f "$$CHAT_TEMPLATE_PATH" ] && [ -f "/chat_template.jinja" ]; then
+          CHAT_TEMPLATE_PATH="/chat_template.jinja"
+        fi
+        if [ -n "$$QWEN_CHAT_TEMPLATE_FILE" ] && [ -f "$$CHAT_TEMPLATE_PATH" ]; then
+          echo "Подключение кастомного шаблона чата: $$CHAT_TEMPLATE_PATH"
+          ARGS="$$ARGS --chat-template-file $$CHAT_TEMPLATE_PATH"
+        fi
+
+        if [ "$$QWEN_ENABLE_THINKING" = "false" ]; then
+          ARGS="$$ARGS --reasoning off"
+        else
+          ARGS="$$ARGS --reasoning on --reasoning-format deepseek --reasoning-effort $${QWEN_REASONING_EFFORT:-xhigh} --reasoning-preserve"
+        fi
+        ARGS="$$ARGS --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0"
+
+        if [ -n "$$QWEN_ALIAS" ]; then
+          ARGS="$$ARGS --alias $$QWEN_ALIAS"
+        fi
+
+        if [ -n "$$QWEN_API_KEY" ]; then
+          ARGS="$$ARGS --api-key $$QWEN_API_KEY"
+        fi
+
+        if [ -n "$$QWEN_EXTRA_ARGS" ]; then
+          ARGS="$$ARGS $$QWEN_EXTRA_ARGS"
+        fi
+
+        echo "======================================================================"
+        echo " Запуск llama-server: $$SERVER_BIN $$ARGS"
+        echo "======================================================================"
+        eval exec "$$SERVER_BIN" "$$ARGS"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

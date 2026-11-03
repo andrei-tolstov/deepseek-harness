@@ -1,6 +1,7 @@
 [Unit]
 Description=Set NVIDIA Tesla V100 Initial Power Limit on System Boot
-After=network.target
+After=nvidia-persistenced.service systemd-modules-load.service
+Wants=nvidia-persistenced.service
 
 [Service]
 Type=oneshot

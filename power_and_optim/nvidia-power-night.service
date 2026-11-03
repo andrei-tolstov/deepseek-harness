@@ -1,6 +1,7 @@
 [Unit]
 Description=Set NVIDIA Tesla V100 Night Quiet Mode (100W)
-After=network.target
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
 
 [Service]
 Type=oneshot

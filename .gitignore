@@ -11,12 +11,30 @@ id_*
 *.crt
 *.cer
 
-# Данные контейнеров
+# Данные контейнеров и черновики
 data/
 workspace/
-models/
-!models/.gitkeep
 backups/
+scratch/
+
+# Python кэш и базы данных
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite*
+*.bak
+
+# Модели и тяжелые веса (конфиги, Dockerfile и shell-скрипты в models/* отслеживаются)
+models/**/*.gguf
+models/**/*.ninfer
+models/**/*.safetensors
+models/**/*.bin
+models/**/.env
+models/**/.env.*
+!models/**/.env*.example
+!models/**/.gitkeep
 
 # Временные файлы системы и IDE
 .DS_Store

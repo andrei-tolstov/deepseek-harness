@@ -273,7 +273,7 @@ def evaluate_teacher_judgment(case: Dict[str, Any]) -> Dict[str, Any]:
 def distill_sessions(
     db_path: str,
     jev_log_path: Optional[str] = None,
-    laya_url: Optional[str] = "http://192.168.50.101:8080",
+    laya_url: Optional[str] = "http://192.168.50.38:8080",
     out_train_path: str = "data/laya_distill_train.jsonl",
     out_eval_path: str = "data/laya_distill_eval.jsonl",
     out_report_path: str = "data/laya_distill_report.json",
@@ -444,11 +444,11 @@ def main():
     parser.add_argument("--db-path", default="hermes_state.db", help="Путь к SQLite базе state.db")
     parser.add_argument("--jev-log", default=None, help="Путь к jev-decisions.jsonl")
     parser.add_argument("--fetch-remote", action="store_true", help="Автоматически скачать файлы с сервера перед анализом")
-    parser.add_argument("--ssh-host", default="root@192.168.50.101", help="SSH хост сервера")
-    parser.add_argument("--ssh-key", default=r"C:\Users\andrei\.gemini\id_ed25519_user_root", help="SSH приватный ключ")
+    parser.add_argument("--ssh-host", default=os.environ.get("LAYA_SSH_HOST", "root@192.168.50.38"), help="SSH хост сервера")
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY_PATH", r"C:\Users\andrei\.gemini\id_ed25519_user_root"), help="SSH приватный ключ")
     parser.add_argument("--remote-db", default="/root/harness/hermes/state.db", help="Удаленный путь к state.db")
     parser.add_argument("--remote-jev-log", default="/root/harness/hermes/logs/jev-decisions.jsonl", help="Удаленный путь к jev-decisions.jsonl")
-    parser.add_argument("--laya-url", default="http://192.168.50.101:8080", help="URL Laya /v1/systemone")
+    parser.add_argument("--laya-url", default=os.environ.get("LAYA_URL", "http://192.168.50.38:8080"), help="URL Laya /v1/systemone")
     parser.add_argument("--out-train", default="data/laya_distill_train.jsonl", help="Путь к train jsonl")
     parser.add_argument("--out-eval", default="data/laya_distill_eval.jsonl", help="Путь к eval jsonl")
     parser.add_argument("--out-report", default="data/laya_distill_report.json", help="Путь к отчету json")

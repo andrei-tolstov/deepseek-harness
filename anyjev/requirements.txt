@@ -1,0 +1,5 @@
+anyjev>=0.3.0
+httpx>=0.27.0
+starlette>=0.38.0
+uvicorn>=0.30.0
+numpy>=1.26.0

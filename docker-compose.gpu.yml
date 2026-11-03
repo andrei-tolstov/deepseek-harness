@@ -1,16 +1,15 @@
-# Оверлей для включения аппаратного ускорения NVIDIA GPU в контейнере laya
+# Оверлей для включения аппаратного ускорения NVIDIA GPU в контейнере anyjev
 # Использование:
 # docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 services:
-  laya:
+  anyjev:
     environment:
       - DEVICE=cuda
-      - EXTRA_FLAGS=--cuda-graph
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
-              capabilities: [gpu]
+              device_ids: [ '${ANYJEV_GPU_UUID:-GPU-7b86aac7-cea5-5401-ceb0-463b5df668b1}' ]
+              capabilities: [ gpu ]

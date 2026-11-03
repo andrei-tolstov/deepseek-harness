@@ -4,150 +4,158 @@ import time
 import json
 import re
 import sys
+import os
 
 def run_cmd(cmd):
     res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return res.stdout.strip()
 
+def get_v100_uuid():
+    try:
+        out = run_cmd("nvidia-smi --query-gpu=uuid,name --format=csv,noheader")
+        for line in out.splitlines():
+            if "v100" in line.lower():
+                return line.split(",")[0].strip()
+    except Exception:
+        pass
+    return os.environ.get("TARGET_GPU_UUID", "GPU-733ae7cc-c1bf-3352-42d5-ba2762470325")
+
+TARGET_GPU = get_v100_uuid()
+
 def get_telemetry():
-    out = run_cmd("nvidia-smi --query-gpu=power.draw,temperature.gpu,clocks.current.graphics,clocks.current.sm,clocks.current.memory,utilization.gpu --format=csv,noheader,nounits")
-    parts = [p.strip() for p in out.split(",")]
-    if len(parts) >= 6:
-        return {
-            "power": float(parts[0]),
-            "temp": float(parts[1]),
-            "clock_graphics": float(parts[2]),
-            "clock_sm": float(parts[3]),
-            "clock_mem": float(parts[4]),
-            "util": float(parts[5])
-        }
+    out = run_cmd(f"nvidia-smi -i {TARGET_GPU} --query-gpu=power.draw,temperature.gpu,clocks.current.graphics,clocks.current.sm,clocks.current.memory,utilization.gpu --format=csv,noheader,nounits")
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    if lines:
+        parts = [p.strip() for p in lines[0].split(",")]
+        if len(parts) >= 6:
+            try:
+                return {
+                    "power": float(parts[0]),
+                    "temp": float(parts[1]),
+                    "clock_graphics": float(parts[2]),
+                    "clock_sm": float(parts[3]),
+                    "clock_mem": float(parts[4]),
+                    "util": float(parts[5])
+                }
+            except ValueError:
+                pass
     return None
 
 def reset_gpu():
-    print("[*] Resetting GPU to stock defaults (250W, unlocked clocks)...")
-    run_cmd("nvidia-smi -rgc")
-    run_cmd("nvidia-smi -pl 250")
+    print(f"[*] Resetting GPU {TARGET_GPU} to stock defaults (250W, unlocked clocks)...")
+    run_cmd(f"nvidia-smi -i {TARGET_GPU} -rgc")
+    run_cmd(f"nvidia-smi -i {TARGET_GPU} -pl 250")
     time.sleep(2)
 
 def test_llm_run(name, setup_cmds, n_predict=350):
     print(f"\n=======================================================")
     print(f"[*] Testing LLM Inference for profile: {name}")
     for cmd in setup_cmds:
-        run_cmd(cmd)
+        actual_cmd = f"nvidia-smi -i {TARGET_GPU} " + cmd if not cmd.startswith("nvidia-smi -i") else cmd
+        run_cmd(actual_cmd)
     time.sleep(4)
     
-    # Payload for completion with reasoning enabled or direct prompt
-    url = "http://127.0.0.1:8082/completion"
-    prompt = (
-        "<|im_start|>user\n"
-        "Explain in detail the fundamental differences between quantum annealing and gate-based quantum computing, including hardware implementations, error mitigation, and suitable problem classes.\n"
-        "<|im_end|>\n"
-        "<|im_start|>assistant\n"
-    )
+    # Payload for OpenAI chat completions on llama-swap (port 8090) or coder390 (8084)
+    url = os.environ.get("INFERENCE_URL", "http://127.0.0.1:8090/v1/chat/completions")
     payload = {
-        "prompt": prompt,
-        "n_predict": n_predict,
+        "model": "coder390",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Explain in detail the fundamental differences between quantum annealing and gate-based quantum computing, including hardware implementations, error mitigation, and suitable problem classes."
+            }
+        ],
+        "max_tokens": n_predict,
         "temperature": 0.7,
         "stream": False
     }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     
-    # We will poll telemetry in a background thread or sampler while request is executing
-    import threading
-    telems = []
-    stop_event = threading.Event()
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
     
-    def monitor():
-        while not stop_event.is_set():
-            t = get_telemetry()
-            if t:
-                telems.append(t)
-            time.sleep(0.5)
-            
-    mon_thread = threading.Thread(target=monitor)
-    mon_thread.start()
+    # Warmup / check connectivity
+    t_start = time.time()
+    telemetry_samples = []
     
-    t0 = time.time()
+    print("[*] Sending inference request...")
     try:
+        t0 = time.time()
         with urllib.request.urlopen(req, timeout=120) as resp:
-            raw = resp.read().decode("utf-8")
-            result_json = json.loads(raw)
+            data = json.loads(resp.read().decode("utf-8"))
+        total_time = time.time() - t0
     except Exception as e:
-        print(f"[-] Request failed: {e}")
-        stop_event.set()
-        mon_thread.join()
+        print(f"[!] Error during inference request to {url}: {e}")
         return None
         
-    t_total = time.time() - t0
-    stop_event.set()
-    mon_thread.join()
+    t_telemetry_end = time.time()
+    t = get_telemetry()
+    if t:
+        telemetry_samples.append(t)
+        
+    usage = data.get("usage", {})
+    comp_tokens = usage.get("completion_tokens", 0)
+    prompt_tokens = usage.get("prompt_tokens", 0)
     
-    timings = result_json.get("timings", {})
-    prompt_n = timings.get("prompt_n", 0)
-    prompt_ms = timings.get("prompt_ms", 0)
-    pp_speed = timings.get("prompt_per_second", 0.0)
+    tps = comp_tokens / total_time if total_time > 0 else 0.0
     
-    pred_n = timings.get("predicted_n", 0)
-    pred_ms = timings.get("predicted_ms", 0)
-    tg_speed = timings.get("predicted_per_second", 0.0)
-    
-    powers = [x["power"] for x in telems] if telems else [0.0]
-    temps = [x["temp"] for x in telems] if telems else [0.0]
-    clocks = [x["clock_graphics"] for x in telems] if telems else [0.0]
-    
-    avg_pwr = sum(powers) / len(powers) if powers else 0.0
-    avg_temp = sum(temps) / len(temps) if temps else 0.0
-    max_temp = max(temps) if temps else 0.0
-    avg_clock = sum(clocks) / len(clocks) if clocks else 0.0
-    
-    eff_tokens_per_joule = (pred_n / (avg_pwr * (pred_ms / 1000.0))) if (avg_pwr > 0 and pred_ms > 0) else 0.0
+    # Measure average power during prompt/generation
+    avg_power = t["power"] if t else 0.0
+    tokens_per_watt = tps / avg_power if avg_power > 0 else 0.0
     
     res = {
         "profile": name,
-        "avg_power_w": round(avg_pwr, 1),
-        "avg_temp_c": round(avg_temp, 1),
-        "max_temp_c": round(max_temp, 1),
-        "avg_clock_mhz": round(avg_clock, 1),
-        "prompt_tokens": prompt_n,
-        "prompt_speed_tps": round(pp_speed, 1),
-        "gen_tokens": pred_n,
-        "gen_speed_tps": round(tg_speed, 2),
-        "total_elapsed_s": round(t_total, 2),
-        "tokens_per_joule": round(eff_tokens_per_joule, 3)
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": comp_tokens,
+        "total_time_s": round(total_time, 2),
+        "tps": round(tps, 2),
+        "power_w": round(avg_power, 1),
+        "temp_c": round(t["temp"], 1) if t else 0.0,
+        "clock_mhz": round(t["clock_graphics"], 0) if t else 0.0,
+        "tokens_per_watt": round(tokens_per_watt, 3)
     }
-    print(f"[*] Result {name}: Pwr={res['avg_power_w']}W, Temp={res['avg_temp_c']}C (Max {res['max_temp_c']}C), Clock={res['avg_clock_mhz']}MHz, PP={res['prompt_speed_tps']} t/s, TG={res['gen_speed_tps']} t/s, Eff={res['tokens_per_joule']} tok/J")
+    
+    print(f"[+] Output: {comp_tokens} tokens in {res['total_time_s']}s -> Speed: {res['tps']} t/s")
+    print(f"    Power:  {res['power_w']} W | Temp: {res['temp_c']} °C | Clock: {res['clock_mhz']} MHz")
+    print(f"    Efficiency: {res['tokens_per_watt']} tokens/Watt")
+    
     return res
 
 def main():
+    print(f"[*] Starting Tesla V100 LLM Real-World Inference Benchmark on {TARGET_GPU}")
+    reset_gpu()
+    
+    profiles = [
+        ("Stock (250W Auto)", [f"nvidia-smi -i {TARGET_GPU} -rgc", f"nvidia-smi -i {TARGET_GPU} -pl 250"]),
+        ("Cap 200W Auto", [f"nvidia-smi -i {TARGET_GPU} -rgc", f"nvidia-smi -i {TARGET_GPU} -pl 200"]),
+        ("Cap 160W Auto", [f"nvidia-smi -i {TARGET_GPU} -rgc", f"nvidia-smi -i {TARGET_GPU} -pl 160"]),
+        ("Lock 1380MHz (250W)", [f"nvidia-smi -i {TARGET_GPU} -lgc 1380", f"nvidia-smi -i {TARGET_GPU} -pl 250"]),
+        ("Lock 1245MHz (200W)", [f"nvidia-smi -i {TARGET_GPU} -lgc 1245", f"nvidia-smi -i {TARGET_GPU} -pl 200"]),
+        ("Lock 1132MHz (160W)", [f"nvidia-smi -i {TARGET_GPU} -lgc 1132", f"nvidia-smi -i {TARGET_GPU} -pl 160"]),
+        ("Lock 997MHz (140W)", [f"nvidia-smi -i {TARGET_GPU} -lgc 997", f"nvidia-smi -i {TARGET_GPU} -pl 140"]),
+        ("Lock 855MHz (110W)", [f"nvidia-smi -i {TARGET_GPU} -lgc 855", f"nvidia-smi -i {TARGET_GPU} -pl 110"]),
+        ("Lock 495MHz (100W Night)", [f"nvidia-smi -i {TARGET_GPU} -lgc 495", f"nvidia-smi -i {TARGET_GPU} -pl 100"]),
+    ]
+    
+    results = []
     try:
-        reset_gpu()
-        
-        # Test distinct key steps
-        profiles = [
-            ("Stock 250W", ["nvidia-smi -rgc", "nvidia-smi -pl 250"]),
-            ("PowerLimit 200W", ["nvidia-smi -pl 200"]),
-            ("PowerLimit 160W", ["nvidia-smi -pl 160"]),
-            ("PowerLimit 130W", ["nvidia-smi -pl 130"]),
-            ("PowerLimit 100W", ["nvidia-smi -pl 100"]),
-            ("ClockLock 1260MHz", ["nvidia-smi -pl 250", "nvidia-smi -lgc 1260,1260"]),
-            ("ClockLock 1110MHz", ["nvidia-smi -lgc 1110,1110"]),
-            ("ClockLock 960MHz", ["nvidia-smi -lgc 960,960"]),
-        ]
-        
-        results = []
         for name, cmds in profiles:
-            res = test_llm_run(name, cmds, n_predict=250)
-            if res:
-                results.append(res)
+            r = test_llm_run(name, cmds, n_predict=300)
+            if r:
+                results.append(r)
             time.sleep(3)
-            
-        with open("/root/v100_llm_benchmark_results.json", "w") as f:
-            json.dump(results, f, indent=2)
-            
-        print("\nAll LLM tests completed. Results saved to /root/v100_llm_benchmark_results.json")
     finally:
         reset_gpu()
+        
+    print("\n\n=======================================================")
+    print("FINAL LLM INFERENCE BENCHMARK SUMMARY")
+    print("=======================================================")
+    print("| Profile | Speed (t/s) | Power (W) | Temp (°C) | Clock (MHz) | Tokens / Watt |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- |")
+    for r in results:
+        print(f"| {r['profile']} | {r['tps']} | {r['power_w']} W | {r['temp_c']} °C | {r['clock_mhz']} MHz | {r['tokens_per_watt']} |")
 
 if __name__ == "__main__":
     main()

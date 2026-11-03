@@ -2,7 +2,7 @@
 
 
 ## Project Context
-`deepseek-harness` is a local deployment and orchestration environment for local LLM inference and agent workflows. It coordinates Docker services including `deepseek-harness` (Cordis/web interface), `laya` (System 1 Decision Studio on GPU), `omniroute` (model proxy gateway), and `llama-server` (LLM inference engines).
+`deepseek-harness` is a local deployment and orchestration environment for local LLM inference and agent workflows. It coordinates Docker services including `anyjev` (System 1 Decision Studio on GPU), `llama-swap` (dynamic GPU model supervisor & router), `omniroute` (model proxy gateway), `vscode` (code-server), `backup` (automated Google Drive sync), and GPU inference engines (`coder390` NInfer V2 MTP+Vision, `fable`, `fluxed-up`, `juggernaut-xl`).
 
 ---
 

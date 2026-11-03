@@ -1,6 +1,8 @@
 # Настройка резервного копирования на Google Диск (rclone)
 
-Данный сервис автоматически упаковывает данные `OmniRoute` (настройки, ключи API, маршруты), а также директории нативного стека Harness (`Hermes Agent`: `${HERMES_DIR:-/root/harness/hermes}`, `DSH`: `${DSH_DIR:-/root/harness/dsh}`) в `.tar.gz` архивы и выгружает их на Google Диск по расписанию через `rclone`.
+Данный сервис выполняет автоматическое резервное копирование по расписанию (по умолчанию в 15:00 по МСК):
+- Упаковывает данные `OmniRoute` (настройки, ключи API, маршруты) и директорию `DSH` (`${DSH_DIR:-/root/harness/dsh}`) в `.tar.gz` архивы и выгружает их на Google Диск с ротацией.
+- Копирует последний штатный архив `Hermes Agent` (`${HERMES_BACKUP_DIR:-/root/hermes_backup}/hermes-backup-*.zip`), сохраняя на Google Диске ровно 1 самую свежую копию (с защитой от удаления копии на Google Диске, если локальный каталог пуст). Полный каталог Hermes целиком не архивируется.
 
 ---
 
@@ -75,15 +77,27 @@ docker compose run --rm backup list
 
 ## Восстановление из бэкапа
 
-1. Скачайте нужный архив с Google Диска:
+### 1. Восстановление конфигурации стека (OmniRoute, DSH)
+1. Скачайте нужный архив с Google Диска в локальную директорию:
 ```bash
-docker compose run --rm backup rclone copy gdrive:backups/deepseek-stack/backup_XXXXXXXX_XXXXXX.tar.gz /tmp/
+docker compose run --rm -v ./backups:/host_backups backup rclone copy gdrive:backups/deepseek-stack/backup_XXXXXXXX_XXXXXX.tar.gz /host_backups/
 ```
 2. Распакуйте архив в директорию данных (предварительно остановив сервисы `docker compose stop omniroute`):
 ```bash
-docker compose run --rm -v omniroute-data:/data/omniroute -v ${DSH_DIR:-/root/harness/dsh}:/data/dsh -v ${HERMES_DIR:-/root/harness/hermes}:/data/hermes backup tar -xzf /tmp/backup_XXXXXXXX_XXXXXX.tar.gz -C /data
+docker compose run --rm -v ./backups:/host_backups -v omniroute-data:/data/omniroute -v ${DSH_DIR:-/root/harness/dsh}:/data/dsh backup tar -xzf /host_backups/backup_XXXXXXXX_XXXXXX.tar.gz -C /data
 ```
 3. Запустите сервисы обратно:
 ```bash
 docker compose start
+```
+
+### 2. Восстановление Hermes Agent
+Архивы Hermes сохраняются в `${HERMES_BACKUP_DIR:-/root/hermes_backup}/`. Для восстановления из копии на Google Диске:
+1. Скачайте архив Hermes:
+```bash
+docker compose run --rm backup rclone copy gdrive:backups/deepseek-stack/hermes-backup-YYYY-MM-DD-HHMMSS.zip /root/hermes_backup/
+```
+2. Восстановите состояние штатными средствами Hermes:
+```bash
+hermes restore /root/hermes_backup/hermes-backup-YYYY-MM-DD-HHMMSS.zip
 ```

@@ -1,0 +1,18 @@
+#cloud-config
+users:
+  - name: debian
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPmR8YwHhRrz13Xg3q7NQxhGvDjjjZSF40MLPl0fskFW root@home-srv
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICVP2im962y8EhBEiki2ixqbEH6UwPxfBflxEwEL8bIw ai-key
+  - name: modelgpu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPmR8YwHhRrz13Xg3q7NQxhGvDjjjZSF40MLPl0fskFW root@home-srv
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICVP2im962y8EhBEiki2ixqbEH6UwPxfBflxEwEL8bIw ai-key
+  - name: root
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPmR8YwHhRrz13Xg3q7NQxhGvDjjjZSF40MLPl0fskFW root@home-srv
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICVP2im962y8EhBEiki2ixqbEH6UwPxfBflxEwEL8bIw ai-key

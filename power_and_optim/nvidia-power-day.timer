@@ -1,9 +1,9 @@
 [Unit]
-Description=Timer to trigger NVIDIA Tesla V100 Day Balanced Mode (160W at 09:00 MSK)
+Description=Timer to trigger NVIDIA Tesla V100 Day Mode (250W at 09:00 MSK)
 
 [Timer]
 OnCalendar=*-*-* 09:00:00
-Persistent=true
+Persistent=false
 
 [Install]
 WantedBy=timers.target

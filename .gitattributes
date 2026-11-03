@@ -1,1 +1,9 @@
 graphify-out/graph.json merge=graphify
+
+# Принудительный LF для shell-скриптов, systemd и Dockerfile (защита от CRLF на Windows)
+*.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.jinja text eol=lf
+Dockerfile* text eol=lf
+*.cu text eol=lf

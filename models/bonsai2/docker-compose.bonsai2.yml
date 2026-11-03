@@ -1,0 +1,129 @@
+# ==============================================================================
+# Docker Compose: PrismML llama-server для Ternary-Bonsai-2-27B-Uncensored-Heretic
+# Специализированная конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+# на базе рекомендаций report-ternary-bonsai.md
+#
+# Ключевые параметры:
+#   - Движок: форк PrismML-Eng/llama.cpp (ветка prism) с поддержкой тернарных весов
+#   - Модель: Ternary-Bonsai-2-27B-Uncensored-Heretic-PQ2_0.gguf (~7.21 GB)
+#   - Нативный контекст: 262 144 токенов (-c 262144)
+#   - KV-кэш: Несжатый FP16 (-ctk f16 -ctv f16) ~15.26 GiB VRAM
+#   - VRAM суммарно: ~24.3 GiB из 31.7 GiB доступных (запас ~7.4 GiB VRAM!)
+#   - Батчинг: -b 2048 -ub 512 (Chunked Prefill)
+#   - Мультимодальность: mmproj-BF16.gguf в RAM хоста (--no-mmproj-offload)
+#   - Сэмплирование: temp 1.0, min_p 0.05, top_p 0.95, top_k 20, reasoning medium
+# ==============================================================================
+
+services:
+  bonsai2-llama:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA_ARCHITECTURES: "70"
+    image: prismml-llama:v100
+    container_name: bonsai2-llama-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${BONSAI_PORT:-8082}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - BONSAI_MODEL_FILE=${BONSAI_MODEL_FILE:-Ternary-Bonsai-2-27B-Uncensored-Heretic-PQ2_0.gguf}
+      - BONSAI_MMPROJ_FILE=${BONSAI_MMPROJ_FILE:-mmproj-BF16.gguf}
+      - BONSAI_NO_MMPROJ_OFFLOAD=${BONSAI_NO_MMPROJ_OFFLOAD:-true}
+      - BONSAI_CPU_THREADS=${BONSAI_CPU_THREADS:-16}
+      - BONSAI_API_KEY=${BONSAI_API_KEY:-}
+      - BONSAI_ALIAS=${BONSAI_ALIAS:-bonsai2-27b,bonsai2,default}
+      - BONSAI_CTX_SIZE=${BONSAI_CTX_SIZE:-262144}
+      - BONSAI_BATCH_SIZE=${BONSAI_BATCH_SIZE:-2048}
+      - BONSAI_UBATCH_SIZE=${BONSAI_UBATCH_SIZE:-512}
+      - BONSAI_CACHE_K=${BONSAI_CACHE_K:-f16}
+      - BONSAI_CACHE_V=${BONSAI_CACHE_V:-f16}
+      - BONSAI_N_GPU_LAYERS=${BONSAI_N_GPU_LAYERS:-999}
+      - BONSAI_REASONING_EFFORT=${BONSAI_REASONING_EFFORT:-medium}
+      - BONSAI_TEMP=${BONSAI_TEMP:-1.0}
+      - BONSAI_TOP_P=${BONSAI_TOP_P:-0.95}
+      - BONSAI_TOP_K=${BONSAI_TOP_K:-20}
+      - BONSAI_MIN_P=${BONSAI_MIN_P:-0.05}
+      - LD_LIBRARY_PATH=/app
+      - BONSAI_EXTRA_ARGS=${BONSAI_EXTRA_ARGS:---load-mode auto --slots}
+    volumes:
+      - "${BONSAI_MODELS_DIR:-/root/model/bonsai2}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [Ternary-Bonsai-2 PrismML llama-server] Инициализация на Tesla V100..."
+        echo "======================================================================"
+
+        SERVER_BIN="$$(which /app/llama-server 2>/dev/null || which llama-server 2>/dev/null || find / -name llama-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник PrismML llama-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${BONSAI_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден: $$MODEL_PATH"
+          echo "Убедитесь, что модель скачана в $${BONSAI_MODELS_DIR:-/root/model/bonsai2}"
+          exit 1
+        fi
+
+        ARGS="--host 0.0.0.0 --port 8080"
+        ARGS="$$ARGS -m $$MODEL_PATH"
+
+        MMPROJ_PATH="/models/$${BONSAI_MMPROJ_FILE}"
+        if [ -n "$$BONSAI_MMPROJ_FILE" ] && [ -f "$$MMPROJ_PATH" ]; then
+          echo "Подключение мультимодального проектора: $$MMPROJ_PATH"
+          ARGS="$$ARGS --mmproj $$MMPROJ_PATH"
+          if [ "$$BONSAI_NO_MMPROJ_OFFLOAD" = "true" ]; then
+            echo "Vision Tower принудительно исполняется в RAM хоста (--no-mmproj-offload)"
+            ARGS="$$ARGS --no-mmproj-offload"
+          fi
+          if [ -n "$$BONSAI_CPU_THREADS" ]; then
+            ARGS="$$ARGS --threads $$BONSAI_CPU_THREADS"
+          fi
+        fi
+
+        ARGS="$$ARGS -ngl $${BONSAI_N_GPU_LAYERS}"
+        ARGS="$$ARGS -c $${BONSAI_CTX_SIZE}"
+        ARGS="$$ARGS --flash-attn on"
+        ARGS="$$ARGS -b $${BONSAI_BATCH_SIZE} -ub $${BONSAI_UBATCH_SIZE}"
+        ARGS="$$ARGS -ctk $${BONSAI_CACHE_K} -ctv $${BONSAI_CACHE_V}"
+        ARGS="$$ARGS --parallel 1 --timeout 86400"
+        ARGS="$$ARGS --jinja"
+        ARGS="$$ARGS --reasoning on --reasoning-effort $${BONSAI_REASONING_EFFORT}"
+        ARGS="$$ARGS --temp $${BONSAI_TEMP} --top-p $${BONSAI_TOP_P} --top-k $${BONSAI_TOP_K} --min-p $${BONSAI_MIN_P}"
+
+        if [ -n "$$BONSAI_ALIAS" ]; then
+          ARGS="$$ARGS --alias $$BONSAI_ALIAS"
+        fi
+
+        if [ -n "$$BONSAI_API_KEY" ]; then
+          ARGS="$$ARGS --api-key $$BONSAI_API_KEY"
+        fi
+
+        if [ -n "$$BONSAI_EXTRA_ARGS" ]; then
+          ARGS="$$ARGS $$BONSAI_EXTRA_ARGS"
+        fi
+
+        echo "======================================================================"
+        echo " Запуск PrismML llama-server: $$SERVER_BIN $$ARGS"
+        echo "======================================================================"
+        eval exec "$$SERVER_BIN" "$$ARGS"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ "${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}" ]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

@@ -1,0 +1,86 @@
+# ==============================================================================
+# Docker Compose: stable-diffusion.cpp Server для FLUX.1 Dev Fluxed Up
+# Специфическая конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+# ==============================================================================
+
+services:
+  fluxed-up-sd:
+    image: ghcr.io/leejet/stable-diffusion.cpp:master-cuda
+    container_name: fluxed-up-sd-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${FLUXED_UP_PORT:-8085}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - FLUXED_UP_MODEL_FILE=${FLUXED_UP_MODEL_FILE:-fluxed_up.gguf}
+      - FLUXED_UP_CLIP_FILE=${FLUXED_UP_CLIP_FILE:-clip_l.safetensors}
+      - FLUXED_UP_T5_FILE=${FLUXED_UP_T5_FILE:-t5xxl_q8_0.gguf}
+      - FLUXED_UP_VAE_FILE=${FLUXED_UP_VAE_FILE:-ae.safetensors}
+      - FLUXED_UP_THREADS=${FLUXED_UP_THREADS:-16}
+    volumes:
+      - "${FLUXED_UP_MODELS_DIR:-/root/model/fluxed_up}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [FLUX Fluxed Up stable-diffusion.cpp] Запуск сервера на V100..."
+        echo "======================================================================"
+
+        SD_SERVER_BIN="$$(which sd-server 2>/dev/null || which /sd.cpp/bin/sd-server 2>/dev/null || which /sd-server 2>/dev/null || find / -name sd-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SD_SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник sd-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${FLUXED_UP_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден: $$MODEL_PATH"
+          exit 1
+        fi
+
+        ARGS="--listen-ip 0.0.0.0 --listen-port 8080"
+        ARGS="$$ARGS --diffusion-model $$MODEL_PATH"
+
+        CLIP_PATH="/models/$${FLUXED_UP_CLIP_FILE}"
+        if [ -f "$$CLIP_PATH" ]; then
+          ARGS="$$ARGS --clip_l $$CLIP_PATH"
+        fi
+
+        T5_PATH="/models/$${FLUXED_UP_T5_FILE}"
+        if [ -f "$$T5_PATH" ]; then
+          ARGS="$$ARGS --t5xxl $$T5_PATH"
+        fi
+
+        VAE_PATH="/models/$${FLUXED_UP_VAE_FILE}"
+        if [ -f "$$VAE_PATH" ]; then
+          ARGS="$$ARGS --vae $$VAE_PATH"
+        fi
+
+        # Включение FlashAttention, фиксация бэкенда на CUDA0 и VAE тайлинга для V100
+        ARGS="$$ARGS --flash-attn off,diffusion=on"
+        ARGS="$$ARGS --params-backend CUDA0 --backend CUDA0"
+        ARGS="$$ARGS --vae-tiling"
+
+        # Калибровка гиперпараметров FLUX.1 (Euler + Simple, CFG 1.0, Guidance 3.5, 25 шагов)
+        ARGS="$$ARGS --sampling-method euler --scheduler simple --guidance 3.5 --cfg-scale 1.0 --steps 25"
+        ARGS="$$ARGS --threads $${FLUXED_UP_THREADS:-16}"
+
+        echo "Запуск: $$SD_SERVER_BIN $$ARGS"
+        exec "$$SD_SERVER_BIN" $$ARGS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}"]
+              capabilities: [gpu]
+    networks:
+      - deepseek-net
+
+networks:
+  deepseek-net:
+    name: deepseek-net
+    external: true

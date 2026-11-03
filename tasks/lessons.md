@@ -1,5 +1,9 @@
 # Lessons & Patterns
 
+## Docker Context & Remote Hosts
+- **Управление глобальным контекстом Docker**: Не переключать и не изменять существующие docker-контексты (например, `remote-vm` с `192.168.50.25`) без явного указания пользователя.
+- **Правило**: При необходимости выполнить команды на другом хосте (например, `192.168.50.38`), использовать прямое подключение через `ssh -i <key> root@<ip> "command..."`.
+
 ## Web Editors / Line Number Gutters
 - **Схлопывание перевода строк в HTML**: Для элементов-контейнеров номеров строк (`div`), чье содержимое заполняется текстом с символами `\n` (`textContent = "1\n2\n..."`), свойство `white-space` по умолчанию равно `normal`. В этом режиме браузер схлопывает `\n` в пробелы и переносит числа по ширине блока (`1 2 3`, `4 5 6`...).
 - **Правило**: Всегда указывать `white-space: pre;` (или `pre-line`), `flex-shrink: 0;`, `box-sizing: border-box;`, а также синхронизировать `line-height` и `padding-top` с основным полем ввода (`textarea`).
@@ -259,3 +263,97 @@
   По умолчанию в таблице `api_keys` поле `catalog_scope` имеет значение `'models'`, из-за чего эндпоинт `/v1/models` возвращает только провайдерные модели и скрывает маршрутизирующие комбо (`combos`).
   - **Правило**: Для ключей API, используемых клиентами с выпадающими списками моделей (DSH, OpenWebUI, Cursor), устанавливать `catalog_scope = 'all'` и добавлять имя комбо как в `allowed_models`, так и в `allowed_combos`.
 
+## OmniRoute Vision Capability Detection in Routing Combos
+- **Ошибка 'No target in combo has confirmed vision support for this image request' (capability_mismatch)**:
+  В шлюзе OmniRoute при поступлении мультимодального запроса (содержащего `image_url` в `messages`) роутер комбо валидирует кандидатов через `resolveCapabilities`. Если кандидат не подтвержден как поддерживающий Vision (`supportsVision !== true`), он исключается с причиной `vision`. Если все кандидаты отфильтрованы, шлюз возвращает `HTTP 400 capability_mismatch`.
+- **Первопричина**:
+  OmniRoute проверяет поддержку Vision тремя путями:
+  1. `customModels` в таблице `key_value` по ключу провайдера. Для кастомных OpenAI-совместимых провайдеров ключ в БД регистрируется как полный ID ноды (`openai-compatible-chat-coder390-v100`), тогда как в комбо указан короткий префикс (`coder390`). Если в объекте модели отсутствует флаг `"supportsVision": true` или ключ не совпадает с `providerId` таргета в комбо, проверка дает `null`.
+  2. `syncedAvailableModels` в таблице `key_value` через префиксный поиск `key LIKE '${provider}:%'`. Если ключ записан с полным ID ноды, поиск по короткому префиксу комбо (`coder390:%`) возвращает 0 записей.
+  3. Таблица `model_capabilities`, которая по умолчанию пуста для локальных моделей.
+- **Правило**:
+  Для корректного подтверждения Vision в комбо OmniRoute:
+  1. В `customModels` (`key_value`) прописывать `"supportsVision": true`, `"input_modalities": ["text", "image"]` и `"capabilities": {"vision": true, "tool_calling": true, "reasoning": true}` для обоих вариантов ключа (полного ID ноды и короткого префикса комбо).
+  2. В `syncedAvailableModels` дублировать запись с коротким префиксом комбо (`coder390:conn-coder390`).
+  3. В таблицу `model_capabilities` добавлять строки для провайдера и модели с `attachment = 1`, `modalities_input = '["text","image"]'`, `modalities_output = '["text"]'`.
+  4. После обновления перезапускать контейнер `omniroute` (`docker restart omniroute`).
+
+## Systemd Timers with Persistent=true in State/Mode Switching
+- **Симптом**: При включении ПК днем видеокарта или сервис остается в ночном режиме (или в непредсказуемом состоянии). Приходится вручную дергать скрипт автопереключения (`nvidia-power-scheduler.sh auto`).
+- **Первопричина**: Опция `Persistent=true` в `systemd.timer` предписывает systemd "догонять" пропущенные запуски, если ПК был выключен в момент расписания. Если ПК выключили до 23:00 и включили в 10:00 утра, systemd считает пропущенными и 23:00 (ночь), и 09:00 (день), и при старте запускает ОБА сервиса одновременно в ту же секунду, что и `boot.service`. Из-за состояния гонки ночной сервис отрабатывает последним и перетирает дневные параметры.
+- **Правило**:
+  1. Для переключателей режимов по времени суток (день/ночь) **никогда не использовать `Persistent=true`** (устанавливать `Persistent=false`). На старте системы актуальный режим должен вычисляться исключительно сервисом загрузки (`auto`), а таймеры должны срабатывать строго в живом времени работы системы.
+  2. Всегда удалять устаревшие файлы штампов в `/var/lib/systemd/timers/stamp-*.timer`.
+  3. В systemd unit сервисов, управляющих GPU, обязательно прописывать явные зависимости от видеодрайвера:
+     ```ini
+     After=nvidia-persistenced.service systemd-modules-load.service
+     Wants=nvidia-persistenced.service
+     ```
+  4. В самих скриптах управления частотами и питанием GPU добавлять мьютекс-блокировку через `flock` и цикл ожидания (retry loop) инициализации устройств `nvidia-smi` при загрузке.
+
+## Hermes Agent -> OmniRoute (OmniProxy) -> llama-swap Routing & Image Generation
+- **Маршрутизация коротких имен моделей без префикса (`coder`) в OmniRoute**:
+  Если клиент (Hermes Agent) отправляет запрос с именем модели без слеша (`model: "coder"`), OmniRoute пытается сопоставить имя с комбо (`combos`) и таблицей сопоставления (`model_combo_mappings`). При отсутствии комбо шлюз возвращает `HTTP 400 Unable to determine provider for model 'coder'`.
+  - **Правило**: Для моделей с короткими псевдонимами (например, `coder`) создавать запись в таблице `combos` (`combo-coder`, таргет `coder390/coder390-27b`), связывать в `model_combo_mappings` (`pattern: coder`), добавлять в `provider_nodes` (`prefix: coder`), а также добавлять имя в `allowed_models` и `allowed_combos` используемого API-ключа.
+- **Политика `allowed_connections` в `api_keys` OmniRoute**:
+  Если поле `allowed_connections` в таблице `api_keys` содержит непустой массив (например, ID внешнего провайдера), OmniRoute блокирует все запросы к остальным соединениям с ошибкой `1 connection(s) exist but are excluded by this API key's connection allowlist`.
+  - **Правило**: Для ключей внутренних агентов (DSH, Hermes Agent) очищать `allowed_connections` (`[]`) или явно включать все локальные соединения к `llama-swap` (`conn-coder390`, `conn-coder`, `conn-llamaswap`).
+- **Связка Hermes Image Generation с `llama-swap` (`FLUX`)**:
+  Hermes Agent поддерживает делегирование генерации изображений через плагин `plugins/image_gen/openai`, который обращается к эндпоинту `/images/generations` через кастомный провайдер из секции `providers:`.
+  - **Правило**: В `~/.hermes/config.yaml` указывать:
+    ```yaml
+    image_gen:
+      provider: openai
+      model: flux
+      openai:
+        provider: llama-swap
+        model: flux
+    providers:
+      llama-swap:
+        name: llama-swap
+        base_url: http://192.168.50.38:8090/v1
+        api_key: dummy
+        models:
+          flux: {}
+    ```
+    В `llama-swap/config.yaml` для диффузионной модели `fluxed-up` должен быть указан псевдоним `flux` в секции `aliases`.
+
+## Hermes Agent Direct llama-swap Migration (Elimination of OmniRoute)
+- **Прямое подключение Hermes Agent к `llama-swap` без OmniRoute**:
+  Исключение промежуточного прокси OmniRoute для Hermes Agent решает проблему сброса Prefix Caching и таймаутов `PI_AI_ERROR`. В `~/.hermes/config.yaml`:
+  1. В секции `model` задать `provider: llama-swap`, `default: coder`, `base_url: http://192.168.50.38:8090/v1`, `api_mode: chat_completions`, `api_key: dummy` (удалить `key_env: HERMES_CUSTOM_OMNI_API_KEY`).
+  2. Из секции `providers` полностью удалить `omni` и `omniproxy`.
+  3. В секции `providers.llama-swap` указать модели с их контекстом (`coder: {context_length: 180000}`, `flux`, и т.д.).
+  4. Для неинтерактивного запуска Hermes CLI через скрипты использовать флаг `-z "<PROMPT>"` (`hermes -z ...`), так как субкоманда `hermes chat` ожидает интерактивный TTY.
+
+## RTK CLI Point-of-Entry Token Optimization & Bashrc Aliasing
+- **Сжатие токенов на границе терминала через RTK (Rust Token Killer)**:
+  В отличие от прокси-сжатия, разрушающего Prefix Caching локальных LLM, сжатие на границе выполнения (Point-of-Entry) сохраняет 100% префикса в `llama-server`.
+  1. Бинарник `rtk` (v1.1.0) разворачивается в `/root/.local/bin/rtk` и линкуется в `/usr/local/bin/rtk`.
+  2. В `/root/.bashrc` обязательно указывать `shopt -s expand_aliases`, чтобы алиасы раскрывались в неинтерактивных подоболочках командных интерпретаторов агентов (`bash -c "..."`).
+  3. Для автоматического усечения шума без необходимости постоянного контроля со стороны модели настраиваются алиасы для `git`, `gh`, `docker`, `kubectl`, `pytest`, `npm`, `cargo`, `pip`, `uv`, `grep`, `diff` и др.
+  4. В системный промпт/правила агента (`~/.hermes/SOUL.md`) добавляется явная секция с описанием утилиты `rtk`, что позволяет модели осознанно вызывать `rtk` при необходимости.
+## PowerShell Aliasing & Argument Forwarding on Windows
+- **Ограничение `Set-Alias` в PowerShell при создании оберток с аргументами**:
+  В командной оболочке PowerShell командлет `Set-Alias` связывает исключительно имя псевдонима с именем исполняемого файла (`Set-Alias rtk_git rtk.exe`) и не поддерживает передачу аргументов по умолчанию (`Set-Alias git "rtk git"` вызывает ошибку парсера).
+  - **Правило**: Для прозрачной подмены команд на утилиты с префиксами (например, `rtk`) в профиле PowerShell (`Microsoft.PowerShell_profile.ps1`) использовать функции с пробросом массива аргументов:
+    ```powershell
+    function git { rtk git @args }
+    function docker { rtk docker @args }
+    function pytest { rtk pytest @args }
+    ```
+    Это обеспечивает 100% совместимость со всеми субкомандами и флагами.
+
+## Llama-swap TTL & Hermes Agent Vision Timeout
+- **Единицы измерения `ttl` в `llama-swap` и паттерн мгновенной выгрузки диффузии**:
+  В файле конфигурации `llama-swap/config.yaml` параметр модели `ttl` задается строго в **секундах**:
+  1. Для текстовых LLM (`fable`, `qwen38`, `bonsai2`) выставляется длинный `ttl: 1200` (20 минут), а для основной модели (`coder390`) — `ttl: 0` (всегда в горячей памяти), чтобы сохранять прогретый KV-кэш диалогов.
+  2. Для тяжелых моделей генерации изображений (`fluxed-up`, `juggernaut-xl`) короткий `ttl: 5` (5 секунд) используется как **осознанный паттерн освобождения VRAM**: сразу после генерации изображения контейнер останавливается, высвобождая ~23 ГБ памяти, а сторожевой демон `watchdog` (с интервалом `5` секунд в `entrypoint.sh`) автоматически возвращает основную мультимодальную модель (`coder390`) в VRAM для проверки сгенерированного артефакта через Vision.
+- **Таймаут анализа изображений (Vision) в Hermes Agent**:
+  В `~/.hermes/config.yaml` при отсутствии блока `auxiliary.vision.timeout` клиент вызовов `async_call_llm` использует дефолтный таймаут 120.0 секунд. При использовании больших локальных моделей (например, Qwen 27B Fable с выгруженным в RAM хоста проектором `--no-mmproj-offload`) первичное кодирование токенов изображения занимает ~115 секунд, и при начале генерации рассуждений клиент прерывает запрос (`Request timed out` / `srv stop: cancel task, id_task = ...`).
+  - **Правило**: В `~/.hermes/config.yaml` обязательно явно указывать щедрый таймаут для рассуждающих моделей зрения:
+    ```yaml
+    auxiliary:
+      vision:
+        timeout: 1200
+    ```

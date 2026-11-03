@@ -100,9 +100,13 @@ def calc_inverted_pwm(temp):
 def cleanup(signum, frame):
     sys.stdout.write("Exiting fancontrol daemon: reverting to BIOS automatic / safe mode...\n")
     try:
-        # Revert pwm2 to BIOS SmartFan (enable=5) or full speed (0)
-        with open(os.path.join(NCT_DIR, 'pwm2_enable'), 'w') as f:
-            f.write('5')
+        # Revert pwm channels to BIOS SmartFan (enable=5) or full speed (0)
+        for ch in CHANNELS:
+            try:
+                with open(os.path.join(NCT_DIR, f'pwm{ch}_enable'), 'w') as f:
+                    f.write('5')
+            except Exception:
+                pass
     except Exception:
         set_all_pwm(0)
     sys.exit(0)

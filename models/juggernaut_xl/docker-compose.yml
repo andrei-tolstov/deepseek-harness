@@ -1,0 +1,74 @@
+# ==============================================================================
+# Docker Compose: stable-diffusion.cpp Server для Juggernaut XL (v9+)
+# Специфическая конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+# ==============================================================================
+
+services:
+  juggernaut-sd:
+    image: ghcr.io/leejet/stable-diffusion.cpp:master-cuda
+    container_name: juggernaut-sd-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${JUGGERNAUT_PORT:-8086}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - JUGGERNAUT_MODEL_FILE=${JUGGERNAUT_MODEL_FILE:-Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors}
+      - JUGGERNAUT_THREADS=${JUGGERNAUT_THREADS:-16}
+    volumes:
+      - "${JUGGERNAUT_MODELS_DIR:-/root/model/juggernaut_xl}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [Juggernaut XL stable-diffusion.cpp] Запуск сервера на V100..."
+        echo "======================================================================"
+
+        SD_SERVER_BIN="$$(which sd-server 2>/dev/null || which /sd.cpp/bin/sd-server 2>/dev/null || which /sd-server 2>/dev/null || find / -name sd-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SD_SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник sd-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${JUGGERNAUT_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден: $$MODEL_PATH"
+          exit 1
+        fi
+
+        ARGS="--listen-ip 0.0.0.0 --listen-port 8080"
+        ARGS="$$ARGS -m $$MODEL_PATH"
+
+        # Исправленный VAE для исключения Black Image Bug (NaN/Inf) на Volta sm_70
+        VAE_PATH="/models/sdxl_vae_fp16_fix.safetensors"
+        if [ -f "$$VAE_PATH" ]; then
+          echo "Подключение исправленного VAE: $$VAE_PATH"
+          ARGS="$$ARGS --vae $$VAE_PATH"
+        fi
+
+        # Тайлинг VAE для снижения пикового расхода памяти
+        ARGS="$$ARGS --vae-tiling"
+
+        # Калибровка гиперпараметров Juggernaut XL v9 (защита от пережога при CFG > 7.0)
+        ARGS="$$ARGS --sampling-method dpm++2m --scheduler karras --cfg-scale 5.0 --steps 32"
+        ARGS="$$ARGS --diffusion-fa"
+        ARGS="$$ARGS --threads $${JUGGERNAUT_THREADS:-16}"
+
+        echo "Запуск: $$SD_SERVER_BIN $$ARGS"
+        exec "$$SD_SERVER_BIN" $$ARGS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}"]
+              capabilities: [gpu]
+    networks:
+      - deepseek-net
+
+networks:
+  deepseek-net:
+    name: deepseek-net
+    external: true

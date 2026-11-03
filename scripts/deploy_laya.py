@@ -82,8 +82,8 @@ def cmd_train(args: argparse.Namespace) -> bool:
 
 
 def cmd_reload(args: argparse.Namespace) -> bool:
-    print("[*] Запрос на горячую перезагрузку весов модели Laya...")
-    script = "docker exec deepseek-laya touch /tmp/laya_restart_requested || touch /tmp/laya_restart_requested"
+    print("[*] Запрос на горячую перезагрузку весов модели Laya/AnyJev...")
+    script = "docker exec deepseek-anyjev touch /tmp/laya_restart_requested 2>/dev/null || docker exec deepseek-laya touch /tmp/laya_restart_requested 2>/dev/null || touch /tmp/laya_restart_requested"
     res = run_ssh(args.ssh_host, args.ssh_key, script)
     if res.returncode != 0:
         print(f"[!] Не удалось отправить сигнал перезагрузки: {res.stderr}")
@@ -126,8 +126,8 @@ def cmd_pipeline(args: argparse.Namespace) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Управление обучением и деплоем Laya System 1")
-    parser.add_argument("--ssh-host", default="root@192.168.50.101", help="SSH хост сервера")
-    parser.add_argument("--ssh-key", default=r"C:\Users\andrei\.gemini\id_ed25519_user_root", help="SSH приватный ключ")
+    parser.add_argument("--ssh-host", default=os.environ.get("LAYA_SSH_HOST", "root@192.168.50.38"), help="SSH хост сервера")
+    parser.add_argument("--ssh-key", default=os.environ.get("SSH_KEY_PATH", r"C:\Users\andrei\.gemini\id_ed25519_user_root"), help="SSH приватный ключ")
     parser.add_argument("--remote-data", default="/root/deepseek-harness/data/laya_distill_train.jsonl", help="Путь к train jsonl на сервере")
     parser.add_argument("--remote-eval", default="/root/deepseek-harness/data/laya_distill_eval.jsonl", help="Путь к eval jsonl на сервере")
     parser.add_argument("--base-checkpoint", default="/root/deepseek-harness/finetune-checkpoint", help="Базовый чекпоинт")
