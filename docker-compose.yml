@@ -180,6 +180,7 @@ services:
     volumes:
       - ${MODELS_DIR:-./models}:/models
       - ./anyjev/anyjev_server.py:/app/anyjev_server.py:ro
+      - ./anyjev/entrypoint.sh:/app/entrypoint.sh:ro
     networks:
       deepseek-net:
         aliases:

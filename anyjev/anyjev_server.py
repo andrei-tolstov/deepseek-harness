@@ -5,6 +5,13 @@ Supports:
 2. Laya Sidecar compatibility endpoint: POST /ask
 3. OpenAI Chat Completions classifier: POST /v1/chat/completions
 4. Health and metadata endpoints: GET /health, GET /version, GET /capabilities
+
+Optimized for Tacit-4B / Tacit-2B on llama-server with:
+- Prefix-First KV-cache prompt structure (0 ms re-prefill on cached rubrics)
+- Pre-warmed token ID cache for zero /tokenize network overhead
+- Balanced two-pass position debiasing (forward + reverse option ordering)
+- Correct Qwen3 <think>\\n\\n</think>\\n\\n template alignment
+- Semantic invariants for visual (@image:) and web (@url:) artifacts
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 import numpy as np
@@ -41,73 +48,82 @@ PORT = int(os.environ.get("PORT", "8080"))
 MCP_PORT = int(os.environ.get("MCP_PORT", "8787"))
 CTX_SIZE = int(os.environ.get("CTX_SIZE", "1024"))
 MODEL_NAME = os.environ.get("MODEL_NAME", "Tacit-4B-Q4_K_M")
+DEBIASE_MODE = os.environ.get("DEBIASE_MODE", "two_pass")  # 'two_pass' (forward+reverse) or 'raw' (1 pass)
+
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 # Global reusable HTTP client with connection pooling
-_client = httpx.Client(timeout=30.0, limits=httpx.Limits(max_keepalive_connections=20, max_connections=50))
+_client = httpx.Client(
+    timeout=30.0,
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+)
 
 
 # -----------------------------------------------------------------------------
-# LlamaServerBackend for AnyJev
+# Fast Tacit Engine with Prefix-First KV-Caching
 # -----------------------------------------------------------------------------
 
-class LlamaTokenizer:
-    """Lightweight tokenizer proxy calling llama-server's /tokenize endpoint."""
+class FastTacitEngine:
+    """High-throughput, low-latency System 1 Decision Engine for Tacit/Qwen3."""
 
-    def __init__(self, base_url: str = LLAMA_URL, client: Optional[httpx.Client] = None):
+    def __init__(self, base_url: str = LLAMA_URL):
         self.base_url = base_url.rstrip("/")
-        self.client = client or _client
-        self.chat_template = True
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
-        try:
-            resp = self.client.post(
-                f"{self.base_url}/tokenize",
-                json={"content": text, "add_special": add_special_tokens},
-                timeout=10.0,
-            )
-            if resp.is_success:
-                data = resp.json()
-                return data.get("tokens", [])
-            log.warning("Tokenize endpoint returned HTTP %s for %r", resp.status_code, text[:60])
-        except Exception as e:
-            log.error("Tokenize error for text %r: %s", text[:60], e)
-        return []
-
-    def apply_chat_template(
-        self,
-        messages: List[Dict[str, str]],
-        tokenize: bool = False,
-        add_generation_prompt: bool = True,
-        **kwargs,
-    ) -> str:
-        parts = []
-        for m in messages:
-            role = m["role"]
-            content = m["content"]
-            parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-        if add_generation_prompt:
-            parts.append("<|im_start|>assistant\n<think>\n</think>\n")
-        rendered = "\n".join(parts)
-        if tokenize:
-            return self.encode(rendered)
-        return rendered
-
-
-class LlamaServerBackend:
-    """AnyJev Backend running over llama-server (OpenAI completions with logprobs)."""
-
-    def __init__(self, base_url: str = LLAMA_URL, model_name: str = MODEL_NAME):
-        self.base_url = base_url.rstrip("/")
-        self.name = model_name
         self.client = _client
-        self.tokenizer = LlamaTokenizer(base_url, client=self.client)
+        self._token_cache: Dict[str, int] = {}
+        self._init_token_cache()
 
-    def _one(self, prompt: str, ids: Sequence[int]) -> np.ndarray:
+    def _init_token_cache(self) -> None:
+        """Pre-populate token IDs for standard option letters, digits, and words."""
+        labels_to_probe = (
+            list(LETTERS)
+            + [str(i) for i in range(10)]
+            + ["Yes", "No", "yes", "no", "true", "false"]
+        )
+        for label in labels_to_probe:
+            for cand in (label, " " + label):
+                try:
+                    r = self.client.post(
+                        f"{self.base_url}/tokenize",
+                        json={"content": cand, "add_special": False},
+                        timeout=5.0,
+                    )
+                    if r.is_success:
+                        toks = r.json().get("tokens", [])
+                        if len(toks) == 1:
+                            self._token_cache[cand] = toks[0]
+                            if cand == label or label not in self._token_cache:
+                                self._token_cache[label] = toks[0]
+                except Exception:
+                    pass
+
+    def get_token_id(self, label: str) -> int:
+        """Retrieve token ID from cache or resolve on the fly."""
+        if label in self._token_cache:
+            return self._token_cache[label]
+        for cand in (label, " " + label):
+            try:
+                r = self.client.post(
+                    f"{self.base_url}/tokenize",
+                    json={"content": cand, "add_special": False},
+                    timeout=5.0,
+                )
+                if r.is_success:
+                    toks = r.json().get("tokens", [])
+                    if len(toks) == 1:
+                        self._token_cache[label] = toks[0]
+                        return toks[0]
+            except Exception:
+                pass
+        return 0
+
+    def get_logprobs(self, prompt: str, token_ids: Sequence[int]) -> np.ndarray:
+        """Fetch next-token log probabilities with prefix KV caching enabled."""
         body = {
             "prompt": prompt,
             "max_tokens": 1,
             "temperature": 0.0,
-            "logprobs": max(50, len(ids) * 2),
+            "logprobs": max(40, len(token_ids) * 2),
+            "cache_prompt": True,
         }
         try:
             resp = self.client.post(
@@ -117,136 +133,264 @@ class LlamaServerBackend:
             )
             resp.raise_for_status()
             data = resp.json()
-        except Exception as e:
-            log.error("LlamaServer completions request failed: %s", e)
-            raise RuntimeError(f"Backend llama-server unavailable: {e}") from e
-
-        try:
             top_list = data["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
             by_id = {item["id"]: float(item["logprob"]) for item in top_list}
-            # Adaptive lower floor: use (min_observed - 2.0) instead of extreme -30.0
-            # to avoid false +23.5 nats exponent explosion in Level 0 debiasing
             min_observed = min((float(item["logprob"]) for item in top_list), default=-15.0)
-            fallback_logprob = min_observed - 2.0
-        except (KeyError, IndexError, TypeError) as e:
-            log.warning("Could not extract logprobs from llama-server response: %s", e)
-            raise RuntimeError(f"Malformed logprobs from llama-server: {e}") from e
+            fallback = min_observed - 2.0
+            return np.array([by_id.get(tid, fallback) for tid in token_ids], dtype=np.float64)
+        except Exception as e:
+            log.error("llama-server completions error: %s", e)
+            raise RuntimeError(f"Backend llama-server unavailable: {e}") from e
 
-        return np.array([by_id.get(tid, fallback_logprob) for tid in ids], dtype=np.float64)
+    def decide_choice(
+        self,
+        state: str,
+        instructions: str,
+        options: List[Tuple[str, str]],
+        mode: str = DEBIASE_MODE,
+    ) -> Dict[str, Any]:
+        """Evaluate a discrete choice question between candidate options.
+        
+        options: list of (key, description)
+        mode: 'raw' (single forward pass) or 'two_pass' (forward + reverse debiased)
+        """
+        k = len(options)
+        if k == 0:
+            return {"choice": None, "confidence": 0.0, "probabilities": {}}
+        if k == 1:
+            return {"choice": options[0][0], "confidence": 1.0, "probabilities": {options[0][0]: 1.0}}
 
-    def next_token_logprobs(
-        self, prompts: Sequence[str], token_ids: Sequence[Sequence[int]]
-    ) -> List[np.ndarray]:
-        return [self._one(p, ids) for p, ids in zip(prompts, token_ids)]
+        labels = list(LETTERS[:k])
+        label_ids = [self.get_token_id(l) for l in labels]
+
+        # Pass 1: Forward order
+        opt_lines_fwd = [
+            f"{labels[i]}. {options[i][0]}: {options[i][1]}" if options[i][1] else f"{labels[i]}. {options[i][0]}"
+            for i in range(k)
+        ]
+        sys_fwd = (
+            "<|im_start|>system\n"
+            "You are a decision function. You will be given a question with options, and a state.\n"
+            f"Question: {instructions.strip()}\n"
+            "Options:\n" + "\n".join(opt_lines_fwd) + "\n"
+            "Reply with the answer label only: no words, no punctuation, no explanation.<|im_end|>\n"
+        )
+        user_part = (
+            f"<|im_start|>user\nState:\n{state.strip()}\n"
+            "Answer with the letter only.<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        )
+
+        lp1 = self.get_logprobs(sys_fwd + user_part, label_ids)
+
+        if mode == "two_pass" and k >= 2:
+            # Pass 2: Reverse order
+            rev_indices = list(reversed(range(k)))
+            opt_lines_rev = [
+                f"{labels[i]}. {options[rev_indices[i]][0]}: {options[rev_indices[i]][1]}"
+                if options[rev_indices[i]][1]
+                else f"{labels[i]}. {options[rev_indices[i]][0]}"
+                for i in range(k)
+            ]
+            sys_rev = (
+                "<|im_start|>system\n"
+                "You are a decision function. You will be given a question with options, and a state.\n"
+                f"Question: {instructions.strip()}\n"
+                "Options:\n" + "\n".join(opt_lines_rev) + "\n"
+                "Reply with the answer label only: no words, no punctuation, no explanation.<|im_end|>\n"
+            )
+            lp2_raw = self.get_logprobs(sys_rev + user_part, label_ids)
+            lp2 = np.zeros_like(lp1)
+            for pos_i, orig_i in enumerate(rev_indices):
+                lp2[orig_i] = lp2_raw[pos_i]
+            combined_lp = (lp1 + lp2) / 2.0
+        else:
+            combined_lp = lp1
+
+        # Normalized softmax distribution
+        combined_lp -= np.max(combined_lp)
+        probs = np.exp(combined_lp)
+        probs /= np.sum(probs)
+
+        best_idx = int(np.argmax(probs))
+        dist = {options[i][0]: float(probs[i]) for i in range(k)}
+
+        return {
+            "choice": options[best_idx][0],
+            "confidence": round(float(probs[best_idx]), 4),
+            "probabilities": dist,
+        }
+
+    def decide_noul(
+        self,
+        state: str,
+        instructions: str,
+        criteria: Optional[Dict[str, str]] = None,
+        mode: str = "raw",
+    ) -> Dict[str, Any]:
+        """Evaluate a binary yes/no statement."""
+        yes_id = self.get_token_id("Yes")
+        no_id = self.get_token_id("No")
+
+        desc_text = ""
+        if criteria and isinstance(criteria, dict):
+            desc_text = "\n" + "\n".join([f"- {k}: {v}" for k, v in criteria.items() if v])
+
+        sys_prompt = (
+            "<|im_start|>system\n"
+            "You are a decision function. You will be given a question and a state.\n"
+            f"Question: {instructions.strip()}{desc_text}\n"
+            "Answer Yes or No.\n"
+            "Reply with the answer word only: no words, no punctuation, no explanation.<|im_end|>\n"
+        )
+        user_part = (
+            f"<|im_start|>user\nState:\n{state.strip()}\n"
+            "Answer Yes or No.<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        )
+
+        lp = self.get_logprobs(sys_prompt + user_part, [yes_id, no_id])
+        lp -= np.max(lp)
+        p = np.exp(lp)
+        p /= np.sum(p)
+        p_true = float(p[0])
+
+        return {
+            "noul": round(p_true, 4),
+            "passed": p_true >= 0.5,
+            "confidence": round(max(p_true, 1.0 - p_true), 4),
+        }
+
+    def decide_score(
+        self,
+        state: str,
+        instructions: str,
+        levels: List[Tuple[str, str]],
+        mode: str = "raw",
+    ) -> Dict[str, Any]:
+        """Evaluate an ordinal score/rubric rating."""
+        k = len(levels)
+        digits = [str(i + 1) for i in range(k)]
+        token_ids = [self.get_token_id(d) for d in digits]
+
+        level_lines = [
+            f"{digits[i]}. {levels[i][0]}: {levels[i][1]}" if levels[i][1] else f"{digits[i]}. {levels[i][0]}"
+            for i in range(k)
+        ]
+        sys_prompt = (
+            "<|im_start|>system\n"
+            "You are a decision function. Pick the level that applies (the levels are ordered):\n"
+            f"Question: {instructions.strip()}\n"
+            "Levels:\n" + "\n".join(level_lines) + "\n"
+            "Reply with the level number only: no words, no punctuation, no explanation.<|im_end|>\n"
+        )
+        user_part = (
+            f"<|im_start|>user\nState:\n{state.strip()}\n"
+            "Answer with the number only.<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        )
+
+        lp = self.get_logprobs(sys_prompt + user_part, token_ids)
+        lp -= np.max(lp)
+        p = np.exp(lp)
+        p /= np.sum(p)
+
+        best_idx = int(np.argmax(p))
+        dist = {levels[i][0]: float(p[i]) for i in range(k)}
+        expected_value = float(sum((i + 1) * p[i] for i in range(k)))
+
+        return {
+            "score": levels[best_idx][0],
+            "confidence": round(float(p[best_idx]), 4),
+            "probabilities": dist,
+            "value": round(expected_value, 4),
+        }
 
 
-# Global AnyJev Decider instance
-backend = LlamaServerBackend()
-from anyjev import Decider, Question
-decider = Decider(backend, level="L0")
+# Global Fast Engine
+fast_engine = FastTacitEngine()
 
 
 # -----------------------------------------------------------------------------
-# Decision Helper Logic
+# Decision Execution Pipeline
 # -----------------------------------------------------------------------------
 
-def parse_question(qid: str, q_data: Dict[str, Any]) -> Optional[Question]:
-    q_type = q_data.get("type", "choice")
-    instructions = q_data.get("instructions", "")
-    criteria = q_data.get("criteria", {})
-
-    if q_type == "choice":
-        if isinstance(criteria, dict) and criteria:
-            options = list(criteria.keys())
-            lines = [instructions]
-            for opt, desc in criteria.items():
-                if desc:
-                    lines.append(f"- {opt}: {desc}")
-            full_text = "\n".join(lines)
-            return Question.choice(full_text, options, name=qid)
-        elif isinstance(criteria, list) and criteria:
-            return Question.choice(instructions, criteria, name=qid)
-        else:
-            return Question.choice(instructions, ["yes", "no"], name=qid)
-
-    elif q_type == "noul":
-        full_text = instructions
-        if isinstance(criteria, dict) and criteria:
-            lines = [instructions]
-            for opt, desc in criteria.items():
-                if desc:
-                    lines.append(f"- {opt}: {desc}")
-            full_text = "\n".join(lines)
-        return Question.noul(full_text, name=qid)
-
-    elif q_type == "score":
-        if isinstance(criteria, list) and criteria:
-            return Question.score(instructions, levels=criteria, name=qid)
-        elif isinstance(criteria, dict) and criteria:
-            lines = [instructions]
-            for opt, desc in criteria.items():
-                if desc:
-                    lines.append(f"- {opt}: {desc}")
-            full_text = "\n".join(lines)
-            return Question.score(full_text, levels=list(criteria.keys()), name=qid)
-        else:
-            return Question.score(instructions, bins=5, name=qid)
-
-    return None
+def parse_options(criteria: Any) -> List[Tuple[str, str]]:
+    """Parse criteria dictionary or list into list of (key, desc) tuples."""
+    if isinstance(criteria, dict):
+        return [(str(k), str(v or "")) for k, v in criteria.items()]
+    elif isinstance(criteria, list):
+        return [(str(item), "") for item in criteria]
+    return [("yes", ""), ("no", "")]
 
 
 def execute_decision(state: Any, questions: Any) -> Dict[str, Any]:
+    """Execute decision for a state across one or multiple typed questions."""
     t0 = time.time()
     state_str = json.dumps(state, ensure_ascii=False) if isinstance(state, (dict, list)) else str(state)
 
     if isinstance(questions, list):
-        q_dict: Dict[str, Any] = {q.get("id", f"q{i}"): q for i, q in enumerate(questions) if isinstance(q, dict)}
+        q_dict: Dict[str, Any] = {
+            q.get("id", f"q{i}"): q for i, q in enumerate(questions) if isinstance(q, dict)
+        }
     elif isinstance(questions, dict):
         q_dict = questions
     else:
         q_dict = {}
 
-    parsed_qs = []
-    q_map = {}
+    answers: Dict[str, Any] = {}
+
     for qid, q_data in q_dict.items():
-        q_obj = parse_question(qid, q_data)
-        if q_obj:
-            parsed_qs.append(q_obj)
-            q_map[qid] = q_data
-
-    if not parsed_qs:
-        return {"answers": {}, "usage": {"latency_ms": 0.0}}
-
-    res = decider.decide(state_str, parsed_qs)
-    answers = {}
-
-    for qid, q_data in q_map.items():
-        d = res[qid]
         q_type = q_data.get("type", "choice")
+        instructions = q_data.get("instructions", "")
+        criteria = q_data.get("criteria", {})
 
         if q_type == "choice":
-            top_choice = str(d.answer)
-            answers[qid] = {
-                "choice": top_choice,
-                "probabilities": d.distribution,
-                "confidence": round(float(d.confidence), 4),
-            }
+            options = parse_options(criteria)
+            res = fast_engine.decide_choice(state_str, instructions, options)
+            answers[qid] = res
+
         elif q_type == "noul":
-            prob_true = float(d.p_true)
-            passed = prob_true >= 0.5
-            answers[qid] = {
-                "noul": round(prob_true, 4),
-                "passed": passed,
-                "confidence": round(float(d.confidence), 4),
-            }
+            crit_dict = criteria if isinstance(criteria, dict) else {}
+            res = fast_engine.decide_noul(state_str, instructions, crit_dict)
+            answers[qid] = res
+
         elif q_type == "score":
-            val = getattr(d, "value", None)
-            answers[qid] = {
-                "score": str(d.answer),
-                "probabilities": d.distribution,
-                "confidence": round(float(d.confidence), 4),
-                "value": round(float(val), 4) if val is not None else None,
-            }
+            levels = parse_options(criteria) if criteria else [(str(i + 1), "") for i in range(5)]
+            res = fast_engine.decide_score(state_str, instructions, levels)
+            answers[qid] = res
+
+    # Semantic invariants for tool_decision
+    # If the user request clearly contains visual artifacts (@image:) or external URLs (@url:),
+    # or if an explicit tool category (marketplace, filesystem, vision, terminal) has high confidence,
+    # prevent false direct_chat degradation.
+    if "tool_decision" in answers:
+        td_ans = answers["tool_decision"]
+        choice = td_ans.get("choice")
+        probs = td_ans.get("probabilities", {})
+
+        has_media_artifact = "@image:" in state_str or "@url:" in state_str
+        cat_is_tool_action = False
+        if "category" in answers:
+            cat_choice = answers["category"].get("choice")
+            if cat_choice in (
+                "multimedia_and_vision",
+                "marketplace_and_commerce",
+                "filesystem",
+                "terminal_execution",
+                "code_and_git",
+                "browser_automation",
+            ):
+                cat_is_tool_action = True
+
+        if choice == "direct_chat" and (has_media_artifact or (cat_is_tool_action and td_ans.get("confidence", 0.0) < 0.70)):
+            td_ans["choice"] = "execute_tools"
+            if probs:
+                p_exec = probs.get("execute_tools", 0.5)
+                p_chat = probs.get("direct_chat", 0.5)
+                probs["execute_tools"] = max(p_exec, 0.85)
+                probs["direct_chat"] = min(p_chat, 0.15)
+                td_ans["confidence"] = 0.85
 
     latency_ms = round((time.time() - t0) * 1000, 2)
     return {"answers": answers, "usage": {"latency_ms": latency_ms}}
@@ -257,6 +401,7 @@ def execute_decision(state: Any, questions: Any) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 
 async def api_health(request: Request) -> JSONResponse:
+    """Service health status and underlying llama-server readiness."""
     backend_ok = False
     loop = asyncio.get_running_loop()
     try:
@@ -281,6 +426,7 @@ async def api_health(request: Request) -> JSONResponse:
             "engine": "anyjev",
             "model": os.path.basename(os.environ.get("MODEL_PATH", "Tacit-4B-Q4_K_M")).replace(".gguf", "").lower(),
             "backend": "llama-server",
+            "debiase_mode": DEBIASE_MODE,
         },
         status_code=status_code,
     )
@@ -289,8 +435,8 @@ async def api_health(request: Request) -> JSONResponse:
 async def api_version(request: Request) -> JSONResponse:
     return JSONResponse({
         "ok": True,
-        "version": "0.3.1",
-        "engine": "anyjev",
+        "version": "0.3.2",
+        "engine": "anyjev-fastbridge",
         "primitives": ["choice", "noul", "score"],
     })
 
@@ -307,6 +453,7 @@ async def api_capabilities(request: Request) -> JSONResponse:
 
 
 async def api_systemone(request: Request) -> JSONResponse:
+    """Native System 1 / Jev protocol endpoint: POST /v1/systemone."""
     try:
         body = await request.json()
     except Exception:
@@ -331,7 +478,7 @@ async def api_systemone(request: Request) -> JSONResponse:
 
 
 async def api_ask(request: Request) -> JSONResponse:
-    """Laya Sidecar compatibility endpoint for /ask."""
+    """Laya Sidecar compatibility endpoint for hermes-laya-tools: POST /ask."""
     try:
         body = await request.json()
     except Exception:
@@ -371,7 +518,6 @@ async def api_chat_completions(request: Request) -> JSONResponse:
     messages = body.get("messages", [])
     model = body.get("model", MODEL_NAME)
 
-    # 1. Gather all message text to parse embedded router headers
     full_prompt_text = ""
     for m in messages:
         c = m.get("content", "")
@@ -402,13 +548,11 @@ async def api_chat_completions(request: Request) -> JSONResponse:
     if user_match:
         user_message = user_match.group(1).strip()
     else:
-        # Fallback to standard OpenAI format
         for m in reversed(messages):
             if m.get("role") == "user":
                 user_message = str(m.get("content", "")).strip()
                 break
 
-    # If tools were passed via OpenAI tools field
     if not toolsets_map:
         tools = body.get("tools", [])
         for t in tools:
@@ -440,7 +584,8 @@ async def api_chat_completions(request: Request) -> JSONResponse:
         log.warning("Gate check execution error: %s", e)
         prob_tools = 0.5
 
-    if prob_tools < 0.35:
+    # Check for direct chat with safety threshold (>= 0.75 confidence to strip tools)
+    if prob_tools < 0.25 and ("@image:" not in user_message and "@url:" not in user_message):
         content_json = {
             "confidence": round(1.0 - prob_tools, 2),
             "action": "no_tools",
@@ -448,7 +593,6 @@ async def api_chat_completions(request: Request) -> JSONResponse:
             "reason_code": "anyjev_gate_pass",
         }
     else:
-        # Narrow toolsets if available
         if toolsets_map:
             criteria = {k: v[:120] for k, v in list(toolsets_map.items())[:16]}
             choice_questions = {

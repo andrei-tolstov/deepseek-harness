@@ -8,6 +8,8 @@ MCP_PORT="${MCP_PORT:-8787}"
 CTX_SIZE="${CTX_SIZE:-1024}"
 N_GPU_LAYERS="${N_GPU_LAYERS:-99}"
 THREADS="${THREADS:-4}"
+PARALLEL_SLOTS="${PARALLEL_SLOTS:-2}"
+CACHE_REUSE="${CACHE_REUSE:-64}"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0
@@ -19,6 +21,8 @@ echo "          Модель         : $MODEL_PATH"
 echo "          Внутренний порт: $LLAMA_PORT"
 echo "          Контекст (ctx) : $CTX_SIZE"
 echo "          GPU слои (ngl) : $N_GPU_LAYERS"
+echo "          Слоты (parallel): $PARALLEL_SLOTS"
+echo "          Кэш-реюз       : $CACHE_REUSE"
 echo "======================================================================"
 
 start_llama() {
@@ -29,6 +33,9 @@ start_llama() {
         --ctx-size "$CTX_SIZE" \
         --n-gpu-layers "$N_GPU_LAYERS" \
         --threads "$THREADS" \
+        --parallel "$PARALLEL_SLOTS" \
+        --cache-prompt \
+        --cache-reuse "$CACHE_REUSE" \
         &
     LLAMA_PID=$!
     echo "$LLAMA_PID" > /tmp/llama_server.pid
