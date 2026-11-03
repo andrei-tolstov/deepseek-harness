@@ -100,8 +100,8 @@ services:
     command: sh -c "mkdir -p /workspace /dsh /hermes && chown -R 1000:1000 /workspace /dsh /hermes && chmod 775 /workspace"
     volumes:
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      - ${DSH_DIR:-/root/harness/dsh}:/dsh
-      - ${HERMES_DIR:-/root/harness/hermes}:/hermes
+      - ${DSH_DIR:-./data/dsh}:/dsh
+      - ${HERMES_DIR:-./data/hermes}:/hermes
     networks:
       - deepseek-net
 
@@ -139,8 +139,8 @@ services:
     volumes:
       - vscode-data:/home/coder
       - ${WORKSPACE_DIR:-./workspace}:/workspace
-      - ${DSH_DIR:-/root/harness/dsh}:/dsh
-      - ${HERMES_DIR:-/root/harness/hermes}:/hermes
+      - ${DSH_DIR:-./data/dsh}:/dsh
+      - ${HERMES_DIR:-./data/hermes}:/hermes
       - ./deepseek.code-workspace:/etc/code-server/deepseek.code-workspace:ro
     depends_on:
       workspace-init:
@@ -168,7 +168,7 @@ services:
       - MODEL_PATH=/models/Tacit-4B-Q4_K_M.gguf
       - CTX_SIZE=1024
       - N_GPU_LAYERS=99
-      - LD_LIBRARY_PATH=/usr/local/lib/llama:/usr/lib/x86_64-linux-gnu
+      - LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
       - TZ=${TZ:-Europe/Moscow}
     deploy:
       resources:
@@ -178,12 +178,7 @@ services:
               device_ids: [ '${ANYJEV_GPU_UUID:-GPU-7b86aac7-cea5-5401-ceb0-463b5df668b1}' ]
               capabilities: [ gpu ]
     volumes:
-      - ./models:/models
-      - /root/llama.cpp/bin/llama-server:/usr/local/bin/llama-server:ro
-      - /root/llama.cpp/lib:/usr/local/lib/llama:ro
-      - /usr/lib/x86_64-linux-gnu/libcublas.so.12:/usr/lib/x86_64-linux-gnu/libcublas.so.12:ro
-      - /usr/lib/x86_64-linux-gnu/libcublasLt.so.12:/usr/lib/x86_64-linux-gnu/libcublasLt.so.12:ro
-      - /usr/lib/x86_64-linux-gnu/libcudart.so.12:/usr/lib/x86_64-linux-gnu/libcudart.so.12:ro
+      - ${MODELS_DIR:-./models}:/models
       - ./anyjev/anyjev_server.py:/app/anyjev_server.py:ro
     networks:
       deepseek-net:
@@ -219,7 +214,7 @@ services:
     volumes:
       # Тома и внешние каталоги для резервного копирования (в режиме только для чтения)
       - omniroute-data:/data/omniroute:ro
-      - ${DSH_DIR:-/root/harness/dsh}:/data/dsh:ro
+      - ${DSH_DIR:-./data/dsh}:/data/dsh:ro
       # Каталог со штатными zip-архивами Hermes Agent
       - ${HERMES_BACKUP_DIR:-/root/hermes_backup}:/hermes_backup:ro
       # Конфигурация и учетные данные rclone
