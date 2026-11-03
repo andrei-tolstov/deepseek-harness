@@ -59,6 +59,17 @@ _client = httpx.Client(
 )
 
 
+def truncate_state(state: str, max_chars: int = 1500) -> str:
+    """Safely clamp state text to prevent prompt overflow in limited context slots.
+    Preserves recent context and instruction tail if state is long.
+    """
+    if not state or len(state) <= max_chars:
+        return state
+    head_len = max_chars // 3
+    tail_len = max_chars - head_len - 20
+    return state[:head_len] + "\n...[truncated]...\n" + state[-tail_len:]
+
+
 # -----------------------------------------------------------------------------
 # Fast Tacit Engine with Prefix-First KV-Caching
 # -----------------------------------------------------------------------------
@@ -154,6 +165,7 @@ class FastTacitEngine:
         options: list of (key, description)
         mode: 'raw' (single forward pass) or 'two_pass' (forward + reverse debiased)
         """
+        state = truncate_state(state)
         k = len(options)
         if k == 0:
             return {"choice": None, "confidence": 0.0, "probabilities": {}}
@@ -216,6 +228,7 @@ class FastTacitEngine:
         dist = {options[i][0]: float(probs[i]) for i in range(k)}
 
         return {
+            "type": "choice",
             "choice": options[best_idx][0],
             "confidence": round(float(probs[best_idx]), 4),
             "probabilities": dist,
@@ -229,6 +242,7 @@ class FastTacitEngine:
         mode: str = "raw",
     ) -> Dict[str, Any]:
         """Evaluate a binary yes/no statement."""
+        state = truncate_state(state)
         yes_id = self.get_token_id("Yes")
         no_id = self.get_token_id("No")
 
@@ -256,6 +270,7 @@ class FastTacitEngine:
         p_true = float(p[0])
 
         return {
+            "type": "noul",
             "noul": round(p_true, 4),
             "passed": p_true >= 0.5,
             "confidence": round(max(p_true, 1.0 - p_true), 4),
@@ -269,6 +284,7 @@ class FastTacitEngine:
         mode: str = "raw",
     ) -> Dict[str, Any]:
         """Evaluate an ordinal score/rubric rating."""
+        state = truncate_state(state)
         k = len(levels)
         digits = [str(i + 1) for i in range(k)]
         token_ids = [self.get_token_id(d) for d in digits]
@@ -297,10 +313,12 @@ class FastTacitEngine:
 
         best_idx = int(np.argmax(p))
         dist = {levels[i][0]: float(p[i]) for i in range(k)}
-        expected_value = float(sum((i + 1) * p[i] for i in range(k)))
+        expected_value = float(sum(i * p[i] for i in range(k)))
 
         return {
-            "score": levels[best_idx][0],
+            "type": "score",
+            "score": round(expected_value, 4),
+            "level": levels[best_idx][0],
             "confidence": round(float(p[best_idx]), 4),
             "probabilities": dist,
             "value": round(expected_value, 4),

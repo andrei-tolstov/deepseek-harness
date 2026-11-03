@@ -166,7 +166,7 @@ services:
       - MCP_PORT=${LAYA_MCP_PORT:-8787}
       - DEVICE=${LAYA_DEVICE:-cuda}
       - MODEL_PATH=/models/Tacit-4B-Q4_K_M.gguf
-      - CTX_SIZE=1024
+      - CTX_SIZE=2048
       - N_GPU_LAYERS=99
       - LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
       - TZ=${TZ:-Europe/Moscow}
