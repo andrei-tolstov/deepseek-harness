@@ -1,0 +1,5 @@
+*.ninfer
+*.bin
+*.tar.gz
+*.tmp
+tmp_dl/

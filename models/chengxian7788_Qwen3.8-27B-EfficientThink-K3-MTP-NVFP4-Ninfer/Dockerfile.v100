@@ -1,0 +1,30 @@
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder
+
+ARG NINFER_REPO=https://github.com/liujun-7788/ninfer-v3-v100.git
+ARG NINFER_BRANCH=master
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build pkg-config git ca-certificates python3 \
+    libcurl4-openssl-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone --depth 1 --branch ${NINFER_BRANCH} ${NINFER_REPO} .
+
+RUN cmake -S . -B build-v100 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+    -DCMAKE_CUDA_ARCHITECTURES=70 \
+    -DNINFER_BUILD_APPS=ON \
+    -DBUILD_TESTING=OFF \
+    -DNINFER_BUILD_BENCHMARKS=OFF \
+    && cmake --build build-v100 --parallel "$(nproc)" --target ninfer ninfer-serve
+
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates libcurl4t64 libavformat60 libavcodec60 libavutil58 libswscale7 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /src/build-v100/apps/ninfer-serve /usr/local/bin/ninfer-serve
+COPY --from=builder /src/build-v100/apps/ninfer /usr/local/bin/ninfer
+EXPOSE 8080
+ENTRYPOINT ["ninfer-serve"]

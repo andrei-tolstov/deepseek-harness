@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder
 
-ARG NINFER_REPO=https://github.com/geoffwatts/ninfer-v100.git
+ARG NINFER_REPO=https://github.com/liujun-7788/ninfer-v3-v100.git
 ARG NINFER_BRANCH=master
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -1,0 +1,129 @@
+services:
+  efficientthink-k3-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.v100
+    image: ninfer-v100:cuda12.8
+    container_name: efficientthink-k3-llama-server
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${K3_PORT:-8087}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - K3_MODEL_FILE=${K3_MODEL_FILE:-model_v100.ninfer}
+      - K3_ALIAS=${K3_ALIAS:-efficientthink-k3-27b}
+      - K3_API_KEY=${K3_API_KEY:-}
+      # 235520 (230K) для максимального контекста на V100 32GB при явном kv-capacity
+      # с автоматическим fallback на 215040 (auto) при нехватке VRAM
+      - K3_MAX_CONTEXT=${K3_MAX_CONTEXT:-235520}
+      - K3_KV_CAPACITY=${K3_KV_CAPACITY:-235520}
+      - K3_MAX_CONCURRENCY=${K3_MAX_CONCURRENCY:-1}
+      - K3_KV_DTYPE=${K3_KV_DTYPE:-int8}
+      - K3_PREFILL_CHUNK=${K3_PREFILL_CHUNK:-2048}
+      - K3_DEVICE_STATE_SLOTS=${K3_DEVICE_STATE_SLOTS:-1}
+      - K3_HOST_STATE_SLOTS=${K3_HOST_STATE_SLOTS:-8}
+      - K3_HOST_KV_MIB=${K3_HOST_KV_MIB:-8192}
+      # Таймаут ожидания очереди: 20 минут = 1200000 мс
+      - K3_PENDING_TIMEOUT_MS=${K3_PENDING_TIMEOUT_MS:-1200000}
+      - K3_SPEC_BACKEND=${K3_SPEC_BACKEND:-mtp}
+      - K3_SPEC_DRAFT_TOKENS=${K3_SPEC_DRAFT_TOKENS:-3}
+      - K3_ENABLE_THINKING=${K3_ENABLE_THINKING:-true}
+      - K3_PRESERVE_THINKING=${K3_PRESERVE_THINKING:-true}
+      # Параметры Vision
+      - K3_ENABLE_VISION=${K3_ENABLE_VISION:-true}
+      - K3_MEDIA_CACHE_MIB=${K3_MEDIA_CACHE_MIB:-512}
+      - K3_MEDIA_LIVE_MIB=${K3_MEDIA_LIVE_MIB:-1024}
+      - K3_MEDIA_PREPROCESS_THREADS=${K3_MEDIA_PREPROCESS_THREADS:-4}
+      - K3_EXTRA_ARGS=${K3_EXTRA_ARGS:-}
+    volumes:
+      - "${K3_MODELS_DIR:-/root/model/efficientthink_k3}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [NInfer v3] Qwen3.8-27B EfficientThink-K3 (nvfp4-mixed MTP+Vision)"
+        echo "======================================================================"
+
+        SERVER_BIN="/usr/local/bin/ninfer-serve"
+        MODEL_PATH="/models/$${K3_MODEL_FILE}"
+
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "Файл $$MODEL_PATH не найден, ищем подходящий .ninfer файл..."
+          ALT_MODEL="$$(find /models -type f -name '*EfficientThink_K3*.ninfer' | head -n 1)"
+          if [ -n "$$ALT_MODEL" ]; then
+            MODEL_PATH="$$ALT_MODEL"
+          else
+            echo "ОШИБКА: Файл модели EfficientThink_K3 не найден в /models!"
+            exit 1
+          fi
+        fi
+
+        build_args() {
+          local max_ctx="$$1"
+          local kv_cap="$$2"
+          local a="$$MODEL_PATH --host 0.0.0.0 --port 8080"
+          if [ -n "$$K3_ALIAS" ]; then a="$$a --model-id $$K3_ALIAS"; fi
+          if [ -n "$$K3_API_KEY" ]; then a="$$a --api-key $$K3_API_KEY"; fi
+          a="$$a --max-context $$max_ctx"
+          a="$$a --kv-capacity $$kv_cap"
+          a="$$a --max-concurrency $${K3_MAX_CONCURRENCY:-1}"
+          a="$$a --kv-dtype $${K3_KV_DTYPE:-int8}"
+          a="$$a --prefill-chunk $${K3_PREFILL_CHUNK:-2048}"
+          a="$$a --device-state-slots $${K3_DEVICE_STATE_SLOTS:-1}"
+          a="$$a --host-state-slots $${K3_HOST_STATE_SLOTS:-8}"
+          a="$$a --host-kv-mib $${K3_HOST_KV_MIB:-8192}"
+          a="$$a --pending-timeout-ms $${K3_PENDING_TIMEOUT_MS:-1200000}"
+
+          if [ "$${K3_SPEC_BACKEND}" != "none" ]; then
+            a="$$a --spec $${K3_SPEC_BACKEND:-mtp} --draft-tokens $${K3_SPEC_DRAFT_TOKENS:-3} --lm-head-draft"
+          fi
+
+          if [ "$$K3_ENABLE_THINKING" = "false" ]; then
+            a="$$a --no-thinking"
+          elif [ "$$K3_PRESERVE_THINKING" = "true" ]; then
+            a="$$a --preserve-thinking"
+          fi
+
+          if [ "$$K3_ENABLE_VISION" = "true" ]; then
+            a="$$a --vision"
+            a="$$a --media-cache-mib $${K3_MEDIA_CACHE_MIB:-512}"
+            a="$$a --media-live-mib $${K3_MEDIA_LIVE_MIB:-1024}"
+            a="$$a --media-preprocess-threads $${K3_MEDIA_PREPROCESS_THREADS:-4}"
+          fi
+
+          if [ -n "$$K3_EXTRA_ARGS" ]; then
+            a="$$a $$K3_EXTRA_ARGS"
+          fi
+          echo "$$a"
+        }
+
+        TARGET_CTX="$${K3_MAX_CONTEXT:-235520}"
+        TARGET_KV_CAP="$${K3_KV_CAPACITY:-235520}"
+
+        ARGS="$$(build_args "$$TARGET_CTX" "$$TARGET_KV_CAP")"
+        echo "Попытка запуска с целевым контекстом $$TARGET_CTX (kv_capacity=$$TARGET_KV_CAP)..."
+        echo "Команда: $$SERVER_BIN $$ARGS"
+
+        # Запускаем ninfer-serve
+        exec $$SERVER_BIN $$ARGS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ "${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}" ]
+              capabilities: [ gpu ]
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/v1/models >/dev/null || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
