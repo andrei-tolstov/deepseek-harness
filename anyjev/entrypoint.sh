@@ -11,7 +11,7 @@ THREADS="${THREADS:-4}"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0
-export LD_LIBRARY_PATH=/usr/local/lib/llama:${LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 
 echo "======================================================================"
 echo " [AnyJev] Запуск llama-server (C++ GGUF inference backend):"
