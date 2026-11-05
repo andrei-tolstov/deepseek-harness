@@ -19,9 +19,9 @@ services:
       - CODER390_MODEL_FILE=${CODER390_MODEL_FILE:-model_v100.ninfer}
       - CODER390_ALIAS=${CODER390_ALIAS:-coder390-27b}
       - CODER390_API_KEY=${CODER390_API_KEY:-}
-      # 204800 (200K) для баланса VRAM с буферами Vision и MTP на V100 32GB
-      - CODER390_MAX_CONTEXT=${CODER390_MAX_CONTEXT:-204800}
-      - CODER390_KV_CAPACITY=${CODER390_KV_CAPACITY:-auto}
+      # 262144 (256K — нативный потолок модели) с явным KV_CAPACITY для работы с Vision и MTP на V100 32GB
+      - CODER390_MAX_CONTEXT=${CODER390_MAX_CONTEXT:-262144}
+      - CODER390_KV_CAPACITY=${CODER390_KV_CAPACITY:-262144}
       - CODER390_MAX_CONCURRENCY=${CODER390_MAX_CONCURRENCY:-1}
       - CODER390_KV_DTYPE=${CODER390_KV_DTYPE:-int8}
       - CODER390_PREFILL_CHUNK=${CODER390_PREFILL_CHUNK:-2048}
@@ -41,14 +41,14 @@ services:
       - CODER390_MEDIA_PREPROCESS_THREADS=${CODER390_MEDIA_PREPROCESS_THREADS:-4}
       - CODER390_EXTRA_ARGS=${CODER390_EXTRA_ARGS:-}
     volumes:
-      - "${CODER390_MODELS_DIR:-/root/model/coder390}:/models:ro"
+      - "${CODER390_MODELS_DIR:-/opt/models/coder390}:/models:ro"
     entrypoint:
       - /bin/sh
       - -c
       - |
         set -e
         echo "======================================================================"
-        echo " [NInfer V2 Vision+MTP] Запуск nerkyor Qwen3.8 Coder390 на Tesla V100"
+        echo " [NInfer V3 Vision+MTP] Запуск nerkyor Qwen3.8 Coder390 на Tesla V100"
         echo "======================================================================"
 
         SERVER_BIN="/usr/local/bin/ninfer-serve"
@@ -75,8 +75,8 @@ services:
           ARGS="$$ARGS --api-key $$CODER390_API_KEY"
         fi
 
-        ARGS="$$ARGS --max-context $${CODER390_MAX_CONTEXT:-204800}"
-        ARGS="$$ARGS --kv-capacity $${CODER390_KV_CAPACITY:-auto}"
+        ARGS="$$ARGS --max-context $${CODER390_MAX_CONTEXT:-262144}"
+        ARGS="$$ARGS --kv-capacity $${CODER390_KV_CAPACITY:-262144}"
         ARGS="$$ARGS --max-concurrency $${CODER390_MAX_CONCURRENCY:-1}"
         ARGS="$$ARGS --kv-dtype $${CODER390_KV_DTYPE:-int8}"
         ARGS="$$ARGS --prefill-chunk $${CODER390_PREFILL_CHUNK:-2048}"

@@ -28,7 +28,7 @@ models:
       in: ["text", "image"]
       out: ["text"]
       tools: true
-      context: 180000
+      context: 262144
 
   fable:
     name: "DavidAU Qwen3.8 27B Fable Cold Fusion"
