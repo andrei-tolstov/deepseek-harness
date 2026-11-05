@@ -7,40 +7,18 @@ unloadTimeout: 15
 hooks:
   on_startup:
     preload:
-      - "efficientthink-k3"
+      - "coder390"
 
 models:
-  efficientthink-k3:
-    name: "Qwen3.8 27B EfficientThink-K3 MTP (nvfp4-mixed)"
-    proxy: "http://192.168.50.38:8087"
-    cmd: >
-      sh -c "docker stop coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a efficientthink-k3-llama-server"
-    cmdStop: "docker stop -t 5 efficientthink-k3-llama-server"
-    checkEndpoint: "/health"
-    useModelName: "efficientthink-k3-27b"
-    ttl: 0
-    aliases:
-      - "efficientthink-k3-27b"
-      - "efficientthink-k3"
-      - "qwen3.8-k3"
-      - "k3"
-      - "chengxian7788"
-      - "default"
-    capabilities:
-      in: ["text", "image"]
-      out: ["text"]
-      tools: true
-      context: 235520
-
   coder390:
     name: "Qwen3.8 27B Coder390 EfficientThink"
     proxy: "http://192.168.50.38:8084"
     cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a coder390-llama-server"
+      sh -c "docker stop efficientthink-k3-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server qwen-image-sd-server 2>/dev/null; exec docker start -a coder390-llama-server"
     cmdStop: "docker stop -t 5 coder390-llama-server"
     checkEndpoint: "/health"
     useModelName: "coder390-27b"
-    ttl: 1200
+    ttl: 0
     aliases:
       - "coder390-27b"
       - "coder390"
@@ -56,7 +34,7 @@ models:
     name: "DavidAU Qwen3.8 27B Fable Cold Fusion"
     proxy: "http://192.168.50.38:8083"
     cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a fable-llama-server"
+      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server qwen-image-sd-server 2>/dev/null; exec docker start -a fable-llama-server"
     cmdStop: "docker stop -t 5 fable-llama-server"
     checkEndpoint: "/health"
     useModelName: "fable-cold-fusion-27b"
@@ -75,7 +53,7 @@ models:
     name: "HauhauCS Qwen3.8 27B Aggressive MTP"
     proxy: "http://192.168.50.38:8081"
     cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a qwen38-llama-server"
+      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server qwen-image-sd-server 2>/dev/null; exec docker start -a qwen38-llama-server"
     cmdStop: "docker stop -t 5 qwen38-llama-server"
     checkEndpoint: "/health"
     useModelName: "qwen3.8-27b"
@@ -90,30 +68,11 @@ models:
       tools: true
       context: 180000
 
-  bonsai2:
-    name: "PrismML Ternary Bonsai 2 27B Heretic"
-    proxy: "http://192.168.50.38:8082"
-    cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a bonsai2-llama-server"
-    cmdStop: "docker stop -t 5 bonsai2-llama-server"
-    checkEndpoint: "/health"
-    useModelName: "bonsai2-27b"
-    ttl: 1200
-    aliases:
-      - "bonsai2-27b"
-      - "bonsai2"
-      - "ternary-bonsai"
-    capabilities:
-      in: ["text", "image"]
-      out: ["text"]
-      tools: true
-      context: 262144
-
   fluxed-up:
     name: "FLUX.1 Dev Fluxed Up"
     proxy: "http://192.168.50.38:8085"
     cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server juggernaut-sd-server 2>/dev/null; exec docker start -a fluxed-up-sd-server"
+      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server juggernaut-sd-server qwen-image-sd-server 2>/dev/null; exec docker start -a fluxed-up-sd-server"
     cmdStop: "docker stop -t 5 fluxed-up-sd-server"
     checkEndpoint: "/"
     useModelName: "fluxed-up"
@@ -130,7 +89,7 @@ models:
     name: "Juggernaut XL v9 RunDiffusionPhoto v2"
     proxy: "http://192.168.50.38:8086"
     cmd: >
-      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server 2>/dev/null; exec docker start -a juggernaut-sd-server"
+      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server qwen-image-sd-server 2>/dev/null; exec docker start -a juggernaut-sd-server"
     cmdStop: "docker stop -t 5 juggernaut-sd-server"
     checkEndpoint: "/"
     useModelName: "juggernaut-xl"
@@ -139,6 +98,25 @@ models:
       - "juggernaut-xl"
       - "juggernaut"
       - "sdxl"
+    capabilities:
+      in: ["text"]
+      out: ["image"]
+
+  qwen-image:
+    name: "Qwen-Image 2.1 Turbo Uncensored (Q8_0)"
+    proxy: "http://192.168.50.38:8088"
+    cmd: >
+      sh -c "docker stop efficientthink-k3-llama-server coder390-llama-server fable-llama-server qwen38-llama-server bonsai2-llama-server fluxed-up-sd-server juggernaut-sd-server 2>/dev/null; exec docker start -a qwen-image-sd-server"
+    cmdStop: "docker stop -t 5 qwen-image-sd-server"
+    checkEndpoint: "/"
+    useModelName: "qwen-image"
+    ttl: 5
+    aliases:
+      - "qwen-image"
+      - "qwen-image-2.1-turbo"
+      - "qwen-image-turbo"
+      - "qwen-image-uncensored"
+      - "qwen-turbo"
     capabilities:
       in: ["text"]
       out: ["image"]

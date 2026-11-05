@@ -1,66 +1,5 @@
 services:
   # ---------------------------------------------------------------------------
-  # Redis: кэш и хранилище квот / rate limit для OmniRoute
-  # ---------------------------------------------------------------------------
-  redis:
-    image: docker.io/library/redis:7-alpine
-    container_name: omniroute-redis
-    restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - omniroute-redis-data:/data
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
-  # OmniRoute: шлюз / роутер AI моделей (OpenAI, DeepSeek, Anthropic, OpenRouter)
-  # ---------------------------------------------------------------------------
-  omniroute:
-    image: diegosouzapw/omniroute:latest
-    container_name: omniroute
-    restart: unless-stopped
-    stop_grace_period: 40s
-    environment:
-      - DATA_DIR=/app/data
-      - REDIS_URL=redis://redis:6379
-      - APP_BIND_HOST=${HOST_BIND_IP:-127.0.0.1}
-      - DASHBOARD_PORT=${OMNIROUTE_DASHBOARD_PORT:-20128}
-      - API_PORT=${OMNIROUTE_API_PORT:-20129}
-      - LIVE_WS_PORT=${OMNIROUTE_LIVE_WS_PORT:-20132}
-      - REQUIRE_API_KEY=${REQUIRE_API_KEY:-false}
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-}
-      - OMNIROUTE_MEMORY_MB=${OMNIROUTE_MEMORY_MB:-2048}
-      - REQUEST_TIMEOUT_MS=${REQUEST_TIMEOUT_MS:-1200000}
-      - FETCH_TIMEOUT_MS=${FETCH_TIMEOUT_MS:-1200000}
-      - STREAM_IDLE_TIMEOUT_MS=${STREAM_IDLE_TIMEOUT_MS:-1200000}
-      - STREAM_ACTIVE_TIMEOUT_MS=${STREAM_ACTIVE_TIMEOUT_MS:-1800000}
-      - STREAM_READINESS_TIMEOUT_MS=${STREAM_READINESS_TIMEOUT_MS:-1200000}
-      - STREAM_READINESS_MAX_TIMEOUT_MS=${STREAM_READINESS_MAX_TIMEOUT_MS:-1200000}
-      - TZ=${TZ:-Europe/Moscow}
-    ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_DASHBOARD_PORT:-20128}:${OMNIROUTE_DASHBOARD_PORT:-20128}"
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_API_PORT:-20129}:${OMNIROUTE_API_PORT:-20129}"
-      - "${HOST_BIND_IP:-127.0.0.1}:${OMNIROUTE_LIVE_WS_PORT:-20132}:${OMNIROUTE_LIVE_WS_PORT:-20132}"
-    volumes:
-      - omniroute-data:/app/data
-    depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: [ "CMD", "node", "healthcheck.mjs" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    networks:
-      - deepseek-net
-
-  # ---------------------------------------------------------------------------
   # llama-swap: динамический супервизор и роутер переключения моделей на GPU
   # ---------------------------------------------------------------------------
   llama-swap:
@@ -119,7 +58,22 @@ services:
         if grep -q "/etc/code-server" /home/coder/.local/share/code-server/coder.json 2>/dev/null; then
           rm -f /home/coder/.local/share/code-server/coder.json
         fi
-        cp -u /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace 2>/dev/null || cp /etc/code-server/deepseek.code-workspace /home/coder/deepseek.code-workspace
+        if [ ! -f /home/coder/deepseek.code-workspace ]; then
+          cat << 'EOF' > /home/coder/deepseek.code-workspace
+        {
+          "folders": [
+            { "name": "Workspace", "path": "/workspace" },
+            { "name": "DSH (DeepSeek Harness)", "path": "/dsh" },
+            { "name": "Hermes Agent", "path": "/hermes" }
+          ],
+          "settings": {
+            "editor.tabSize": 2,
+            "editor.insertSpaces": true
+          }
+        }
+        EOF
+          chown 1000:1000 /home/coder/deepseek.code-workspace 2>/dev/null || true
+        fi
         exec code-server \
           --bind-addr 0.0.0.0:8080 \
           --auth "$${VSCODE_AUTH:-none}" \
@@ -141,7 +95,6 @@ services:
       - ${WORKSPACE_DIR:-./workspace}:/workspace
       - ${DSH_DIR:-./data/dsh}:/dsh
       - ${HERMES_DIR:-./data/hermes}:/hermes
-      - ./deepseek.code-workspace:/etc/code-server/deepseek.code-workspace:ro
     depends_on:
       workspace-init:
         condition: service_completed_successfully
@@ -214,14 +167,11 @@ services:
       - HERMES_BACKUP_DIR=/hermes_backup
     volumes:
       # Тома и внешние каталоги для резервного копирования (в режиме только для чтения)
-      - omniroute-data:/data/omniroute:ro
       - ${DSH_DIR:-./data/dsh}:/data/dsh:ro
       # Каталог со штатными zip-архивами Hermes Agent
       - ${HERMES_BACKUP_DIR:-/root/hermes_backup}:/hermes_backup:ro
       # Конфигурация и учетные данные rclone
       - ./backup:/config/rclone
-    depends_on:
-      - omniroute
     networks:
       - deepseek-net
 
@@ -231,9 +181,5 @@ networks:
     driver: bridge
 
 volumes:
-  omniroute-data:
-    name: deepseek_omniroute_data
-  omniroute-redis-data:
-    name: deepseek_redis_data
   vscode-data:
     name: deepseek_vscode_data

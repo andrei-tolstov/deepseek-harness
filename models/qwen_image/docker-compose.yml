@@ -1,0 +1,90 @@
+# ==============================================================================
+# Docker Compose: stable-diffusion.cpp Server для Qwen-Image-2.1-Turbo Uncensored
+# Специфическая конфигурация под NVIDIA Tesla V100 32GB (Volta, sm_70)
+# ==============================================================================
+
+services:
+  qwen-image-sd:
+    image: ghcr.io/leejet/stable-diffusion.cpp:master-cuda
+    container_name: qwen-image-sd-server
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "${HOST_BIND_IP:-0.0.0.0}:${QWEN_IMAGE_PORT:-8088}:8080"
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+      - QWEN_IMAGE_MODEL_FILE=${QWEN_IMAGE_MODEL_FILE:-qwen_image_turbo.gguf}
+      - QWEN_IMAGE_LLM_FILE=${QWEN_IMAGE_LLM_FILE:-qwen_image_llm_uncensored.gguf}
+      - QWEN_IMAGE_MMPROJ_FILE=${QWEN_IMAGE_MMPROJ_FILE:-qwen_image_mmproj.gguf}
+      - QWEN_IMAGE_VAE_FILE=${QWEN_IMAGE_VAE_FILE:-qwen_image_2.1_vae_bf16.safetensors}
+      - QWEN_IMAGE_THREADS=${QWEN_IMAGE_THREADS:-16}
+    volumes:
+      - "${QWEN_IMAGE_MODELS_DIR:-/opt/models/qwen_image}:/models:ro"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "======================================================================"
+        echo " [Qwen-Image-2.1-Turbo Uncensored sd-server] Запуск на Tesla V100..."
+        echo "======================================================================"
+
+        SD_SERVER_BIN="$$(which sd-server 2>/dev/null || which /sd.cpp/bin/sd-server 2>/dev/null || which /sd-server 2>/dev/null || find / -name sd-server -type f -executable 2>/dev/null | head -n 1)"
+        if [ -z "$$SD_SERVER_BIN" ]; then
+          echo "ОШИБКА: Бинарник sd-server не найден в контейнере!"
+          exit 1
+        fi
+
+        MODEL_PATH="/models/$${QWEN_IMAGE_MODEL_FILE}"
+        if [ ! -f "$$MODEL_PATH" ]; then
+          echo "ОШИБКА: Файл модели не найден: $$MODEL_PATH"
+          exit 1
+        fi
+
+        LLM_PATH="/models/$${QWEN_IMAGE_LLM_FILE}"
+        if [ ! -f "$$LLM_PATH" ]; then
+          echo "ОШИБКА: Файл текстового энкодера не найден: $$LLM_PATH"
+          exit 1
+        fi
+
+        ARGS="--listen-ip 0.0.0.0 --listen-port 8080"
+        ARGS="$$ARGS --diffusion-model $$MODEL_PATH"
+        ARGS="$$ARGS --llm $$LLM_PATH"
+
+        MMPROJ_PATH="/models/$${QWEN_IMAGE_MMPROJ_FILE}"
+        if [ -f "$$MMPROJ_PATH" ]; then
+          ARGS="$$ARGS --llm_vision $$MMPROJ_PATH"
+        fi
+
+        VAE_PATH="/models/$${QWEN_IMAGE_VAE_FILE}"
+        if [ -f "$$VAE_PATH" ]; then
+          ARGS="$$ARGS --vae $$VAE_PATH"
+        fi
+
+        # Аппаратные флаги Volta sm_70: FlashAttention на диффузию, бэкенд CUDA0, тайлинг VAE
+        ARGS="$$ARGS --flash-attn off,diffusion=on"
+        ARGS="$$ARGS --params-backend CUDA0 --backend CUDA0"
+        ARGS="$$ARGS --vae-tiling"
+
+        # Параметры Turbo: 8 шагов, CFG 1.0, сэмплер Euler, калиброванный sigma-schedule
+        ARGS="$$ARGS --sampling-method euler --cfg-scale 1.0 --steps 8"
+        ARGS="$$ARGS --sigmas 1.0,0.978453,0.95418,0.926626,0.89508,0.845148,0.704534,0.414568,0.0"
+        ARGS="$$ARGS -W 1024 -H 1024"
+        ARGS="$$ARGS --threads $${QWEN_IMAGE_THREADS:-16}"
+
+        echo "Запуск: $$SD_SERVER_BIN $$ARGS"
+        exec "$$SD_SERVER_BIN" $$ARGS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TARGET_GPU_UUID:-GPU-733ae7cc-c1bf-3352-42d5-ba2762470325}"]
+              capabilities: [gpu]
+    networks:
+      - deepseek-net
+
+networks:
+  deepseek-net:
+    name: deepseek-net
+    external: true
